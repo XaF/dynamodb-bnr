@@ -9,6 +9,7 @@
 
 import boto3
 from botocore.exceptions import ClientError
+from boto3.exceptions import S3UploadFailedError
 import click
 import datetime
 import fnmatch
@@ -51,26 +52,38 @@ const_parameters = Namespace({
     'json_indent': 2,
     'schema_file': 'schema.json',
     'data_dir': 'data',
-    'throughputexceeded_sleeptime': 10,
-    'throughputexceeded_maxretry': 5,
-    'resourceinuse_sleeptime': 10,
-    'resourceinuse_maxretry': 5,
-    'tableoperation_sleeptime': 5,
-    'dynamodb_max_batch_write': 25,
-    'opensslerror_maxretry': 5,
+    'throughputexceeded_sleeptime': os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_SLEEPTIME', 10),
+    'throughputexceeded_maxretry': os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_MAXRETRY', 5),
+    'resourceinuse_sleeptime': os.getenv('DYNAMODB_BNR_RESOURCEINUSE_SLEEPTIME', 10),
+    'resourceinuse_maxretry': os.getenv('DYNAMODB_BNR_RESOURCEINUSE_MAXRETRY', 5),
+    'tableoperation_sleeptime': os.getenv('DYNAMODB_BNR_TABLEOPERATION_SLEEPTIME', 5),
+    'dynamodb_max_batch_write': os.getenv('DYNAMODB_BNR_MAX_BATCH_WRITE', 25),
+    'opensslerror_maxretry': os.getenv('DYNAMODB_BNR_OPENSSLERROR_MAXRETRY', 5),
 })
 
-_global_client = None
-def get_client():
-    global _global_client
-    if _global_client is None:
-        _global_client = boto3.client(
+_global_client_dynamodb = None
+def get_client_dynamodb():
+    global _global_client_dynamodb
+    if _global_client_dynamodb is None:
+        _global_client_dynamodb = boto3.client(
             service_name='dynamodb',
-            region_name=parameters.region,
-            aws_access_key_id=parameters.accesskey,
-            aws_secret_access_key=parameters.secretkey,
+            region_name=parameters.ddb_region,
+            aws_access_key_id=parameters.ddb_accesskey,
+            aws_secret_access_key=parameters.ddb_secretkey,
         )
-    return _global_client
+    return _global_client_dynamodb
+
+_global_client_s3 = None
+def get_client_s3():
+    global _global_client_s3
+    if _global_client_s3 is None:
+        _global_client_s3 = boto3.client(
+            service_name='s3',
+            region_name=parameters.s3_region,
+            aws_access_key_id=parameters.s3_accesskey,
+            aws_secret_access_key=parameters.s3_secretkey,
+        )
+    return _global_client_s3
 
 def tar_type(path):
     tar_type = None
@@ -116,14 +129,37 @@ class TarFileWriter(multiprocessing.Process):
     help='Define the specific log level')
 @click.option('--logfile', default=None)
 @click.option('--accessKey',
-    default=os.environ['AWS_ACCESS_KEY_ID'] if 'AWS_ACCESS_KEY_ID' in os.environ else None,
-    help='Define the AWS access key (defaults to the environment variable AWS_ACCESS_KEY_ID)')
+    default=os.getenv('AWS_ACCESS_KEY_ID', None),
+    help='Define the AWS default access key (defaults to the environment variable AWS_ACCESS_KEY_ID)')
 @click.option('--secretKey',
-    default=os.environ['AWS_SECRET_ACCESS_KEY'] if 'AWS_SECRET_ACCESS_KEY' in os.environ else None,
-    help='Define the AWS secret key (defaults to the environment variable AWS_SECRET_ACCESS_KEY)')
+    default=os.getenv('AWS_SECRET_ACCESS_KEY', None),
+    help='Define the AWS default secret key (defaults to the environment variable AWS_SECRET_ACCESS_KEY)')
 @click.option('--region',
-    default=os.environ['REGION'] if 'REGION' in os.environ else None,
-    help='Define the AWS region (defaults to the environment variable REGION)')
+    default=os.getenv('REGION', None),
+    help='Define the AWS default region (defaults to the environment variable REGION)')
+@click.option('--ddb-accessKey',
+    default=os.getenv('DDB_AWS_ACCESS_KEY_ID', None),
+    help='Define the AWS DynamoDB access key')
+@click.option('--ddb-secretKey',
+    default=os.getenv('DDB_AWS_SECRET_ACCESS_KEY', None),
+    help='Define the AWS DynamoDB secret key')
+@click.option('--ddb-region',
+    default=os.getenv('DDB_REGION', None),
+    help='Define the AWS DynamoDB region')
+@click.option('--s3-upload/--no-s3-upload', default=False, help='Activate S3 upload')
+@click.option('--s3-create-bucket/--no-s3-create-bucket', default=False, help='Create S3 bucket if it does not exist')
+@click.option('--s3-accessKey',
+    default=os.getenv('S3_AWS_ACCESS_KEY_ID', None),
+    help='Define the AWS S3 access key')
+@click.option('--s3-secretKey',
+    default=os.getenv('S3_AWS_SECRET_ACCESS_KEY', None),
+    help='Define the AWS S3 secret key')
+@click.option('--s3-region',
+    default=os.getenv('S3_REGION', None),
+    help='Define the AWS S3 region')
+@click.option('--s3-bucket',
+    default=os.getenv('S3_BUCKET', None),
+    help='Define the AWS S3 bucket')
 @click.option('--table',
     default='*',
     help='The table to backup or restore (\'*\' means all tables, \'t*\' means all tables starting with \'t\')')
@@ -133,6 +169,44 @@ class TarFileWriter(multiprocessing.Process):
 @click.pass_context
 def cli(ctx, **kwargs):
     ctx.obj.update(kwargs)
+
+    print kwargs
+    # Set up amazon configuration
+    if ctx.obj.accesskey is not None:
+        if ctx.obj.ddb_accesskey is None:
+            ctx.obj.ddb_accesskey = ctx.obj.accesskey
+        if ctx.obj.s3_accesskey is None:
+            ctx.obj.s3_accesskey = ctx.obj.accesskey
+    if ctx.obj.secretkey is not None:
+        if ctx.obj.ddb_secretkey is None:
+            ctx.obj.ddb_secretkey = ctx.obj.secretkey
+        if ctx.obj.s3_secretkey is None:
+            ctx.obj.s3_secretkey = ctx.obj.secretkey
+    if ctx.obj.region is not None:
+        if ctx.obj.ddb_region is None:
+            ctx.obj.ddb_region = ctx.obj.region
+        if ctx.obj.s3_region is None:
+            ctx.obj.s3_region = ctx.obj.region
+
+    # Check that dynamodb configuration is available
+    if ctx.obj.ddb_accesskey is None \
+            or ctx.obj.ddb_secretkey is None \
+            or ctx.obj.ddb_region is None:
+        raise RuntimeError('DynamoDB configuration is incomplete (AccessKey? {}, SecretKey? {}, Region? {})'.format(
+            ctx.obj.ddb_accesskey is not None,
+            ctx.obj.ddb_secretkey is not None,
+            ctx.obj.ddb_region is not None))
+
+    # Check that s3 configuration is available if needed
+    if ctx.obj.s3_upload and (ctx.obj.s3_accesskey is None \
+            or ctx.obj.s3_secretkey is None \
+            or ctx.obj.s3_region is None \
+            or ctx.obj.s3_bucket is None):
+        raise RuntimeError('S3 configuration is incomplete (AccessKey? {}, SecretKey? {}, Region? {}, Bucket? {})'.format(
+            ctx.obj.s3_accesskey is not None,
+            ctx.obj.s3_secretkey is not None,
+            ctx.obj.s3_region is not None,
+            ctx.obj.s3_bucket is not None))
 
     log_level = 'DEBUG' if ctx.obj.debug else ctx.obj.loglevel
     if ctx.obj.logfile is None:
@@ -163,7 +237,7 @@ def cli(ctx, **kwargs):
 
 
 def get_dynamo_matching_table_names(table_name_wildcard):
-    client = get_client()
+    client = get_client_dynamodb()
 
     tables = []
     more_tables = True
@@ -219,7 +293,7 @@ def clean_table_schema(table_schema):
     return table_schema
 
 def table_backup(table_name):
-    client = get_client()
+    client = get_client_dynamodb()
 
     logger.info('Starting backup of table \'{}\''.format(table_name))
 
@@ -383,6 +457,57 @@ def backup(ctx, **kwargs):
     else:
         logger.info('Backup ended without error')
 
+    # Upload to s3 if requested
+    if ctx.obj.s3_upload:
+        logger.info('Uploading files to S3')
+        client_s3 = get_client_s3()
+
+        # Check if bucket exists
+        if ctx.obj.s3_create_bucket:
+            buckets = client_s3.list_buckets()
+            exists = False
+            if 'Buckets' in buckets:
+                for bucket in buckets['Buckets']:
+                    if bucket['Name'] == ctx.obj.s3_bucket:
+                        exists = True
+                        break
+
+            if not exists:
+                logger.info('Creating bucket {} in S3'.format(ctx.obj.s3_bucket))
+                client_s3.create_bucket(Bucket=ctx.obj.s3_bucket, ACL='private')
+
+        # Upload content
+        if ctx.obj.tar_path is not None:
+            s3path = os.path.basename(ctx.obj.dumppath)
+            if badReturn:
+                s3path = '{}~incomplete'.format(s3path)
+            try:
+                client_s3.upload_file(ctx.obj.dumppath, ctx.obj.s3_bucket, s3path)
+            except S3UploadFailedError, e:
+                logger.exception(e)
+                raise e
+            s3logfname = '{}.log'.format(s3path)
+        else:
+            dumpdir = os.path.basename(ctx.obj.dumppath)
+            dumppathlen = len(ctx.obj.dumppath)+1
+            for path, dirs, files in os.walk(ctx.obj.dumppath):
+                for f in files:
+                    filepath = os.path.join(path, f)
+                    s3path = os.path.join(dumpdir, filepath[dumppathlen:])
+                    try:
+                        client_s3.upload_file(filepath, ctx.obj.s3_bucket, s3path)
+                    except S3UploadFailedError, e:
+                        logger.exception(e)
+                        raise e
+            s3logfname = '{}.log'.format(dumpdir)
+        # Upload logfile
+        logger.info('Uploading logfile to S3')
+        try:
+            client_s3.upload_file(ctx.obj.logfile, ctx.obj.s3_bucket, s3logfname)
+        except S3UploadFailedError, e:
+            logger.exception(e)
+            raise e
+
 
 
 def get_dump_matching_table_names(table_name_wildcard):
@@ -498,7 +623,7 @@ def table_batch_write(client, table_name, items):
     return items
 
 def table_restore(table_name):
-    client = get_client()
+    client = get_client_dynamodb()
 
     # define the table directory
     if tarfile.is_tarfile(parameters.dumppath):

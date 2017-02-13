@@ -59,6 +59,8 @@ const_parameters = Namespace({
     'throughputexceeded_maxretry': os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_MAXRETRY', 5),
     'resourceinuse_sleeptime': os.getenv('DYNAMODB_BNR_RESOURCEINUSE_SLEEPTIME', 10),
     'resourceinuse_maxretry': os.getenv('DYNAMODB_BNR_RESOURCEINUSE_MAXRETRY', 5),
+    'limitexceeded_sleeptime': os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_SLEEPTIME', 15),
+    'limitexceeded_maxretry': os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_MAXRETRY', 5),
     'tableoperation_sleeptime': os.getenv('DYNAMODB_BNR_TABLEOPERATION_SLEEPTIME', 5),
     'dynamodb_max_batch_write': os.getenv('DYNAMODB_BNR_MAX_BATCH_WRITE', 25),
     'opensslerror_maxretry': os.getenv('DYNAMODB_BNR_OPENSSLERROR_MAXRETRY', 5),
@@ -247,19 +249,19 @@ def cli(ctx, **kwargs):
 
 
 def get_dynamo_matching_table_names(table_name_wildcard):
-    client = get_client_dynamodb()
+    client_ddb = get_client_dynamodb()
 
     tables = []
     more_tables = True
 
-    table_list = client.list_tables()
+    table_list = client_ddb.list_tables()
     while more_tables:
         for table_name in table_list['TableNames']:
             if fnmatch.fnmatch(table_name, table_name_wildcard):
                 tables.append(table_name)
 
         if 'LastEvaluatedTableName' in table_list:
-            table_list = client.list_tables(
+            table_list = client_ddb.list_tables(
                 ExclusiveStartTableName=table_list['LastEvaluatedTableName'])
         else:
             more_tables = False
@@ -267,12 +269,12 @@ def get_dynamo_matching_table_names(table_name_wildcard):
     return tables
 
 
-def manage_db_scan(client, **kwargs):
+def manage_db_scan(client_ddb, **kwargs):
     items_list = None
     throughputexceeded_currentretry = 0
     while items_list is None:
         try:
-            items_list = client.scan(**kwargs)
+            items_list = client_ddb.scan(**kwargs)
         except ClientError as e:
             if e.response['Error']['Code'] != 'ProvisionedThroughputExceededException' or \
                     throughputexceeded_currentretry >= const_parameters.throughputexceeded_maxretry:
@@ -307,7 +309,7 @@ def clean_table_schema(table_schema):
 
 
 def table_backup(table_name):
-    client = get_client_dynamodb()
+    client_ddb = get_client_dynamodb()
 
     logger.info('Starting backup of table \'{}\''.format(table_name))
 
@@ -350,7 +352,7 @@ def table_backup(table_name):
         current_retry = 0
         while table_schema is None:
             try:
-                table_schema = client.describe_table(TableName=table_name)['Table']
+                table_schema = client_ddb.describe_table(TableName=table_name)['Table']
             except (OpenSSL.SSL.SysCallError, OpenSSL.SSL.Error) as e:
                 if current_retry >= const_parameters.opensslerror_maxretry:
                     raise e
@@ -379,7 +381,7 @@ def table_backup(table_name):
 
         logger.info("Backing up items for table \'{}\'".format(table_name))
 
-        items_list = manage_db_scan(client, TableName=table_name)
+        items_list = manage_db_scan(client_ddb, TableName=table_name)
         while more_items and items_list['ScannedCount'] > 0:
             logger.info("Backing up items for table \'{}\' ({})".format(table_name, more_items))
             items_list = items_list['Items']
@@ -398,7 +400,7 @@ def table_backup(table_name):
                     f.write(jdump)
 
             if 'LastEvaluatedKey' in items_list:
-                items_list = manage_db_scan(client,
+                items_list = manage_db_scan(client_ddb,
                                             TableName=table_name,
                                             ExclusiveStartKey=items_list['LastEvaluatedKey'])
                 more_items += 1
@@ -560,49 +562,68 @@ def get_dump_matching_table_names(table_name_wildcard):
     return tables
 
 
-def table_delete(client, table_name):
+def table_delete(client_ddb, table_name):
     logger.info('Deleting table \'{}\''.format(table_name))
     deleted = False
-    resourceinuse_currentretry = 0
+    managedErrors = ['ResourceInUseException', 'LimitExceededException']
+    currentRetry = {
+        'resourceinuse': 0,
+        'limitexceeded': 0,
+    }
 
     while not deleted:
         try:
-            table_status = client.delete_table(TableName=table_name)["TableDescription"]["TableStatus"]
+            table_status = client_ddb.delete_table(TableName=table_name)["TableDescription"]["TableStatus"]
             while True:
-                logger.info('Waiting {} seconds for table \'{}\' to be deleted [current status: {}]'.format(const_parameters.tableoperation_sleeptime, table_name, table_status))
+                logger.info('Waiting {} seconds for table \'{}\' to be deleted [current status: {}]'.format(
+                    const_parameters.tableoperation_sleeptime, table_name, table_status))
                 time.sleep(const_parameters.tableoperation_sleeptime)
-                table_status = client.describe_table(TableName=table_name)["Table"]["TableStatus"]
+                table_status = client_ddb.describe_table(TableName=table_name)["Table"]["TableStatus"]
         except ClientError as e:
             if e.response['Error']['Code'] == 'ResourceNotFoundException':
                 deleted = True
-            elif e.response['Error']['Code'] == 'ResourceInUseException':
-                resourceinuse_currentretry += 1
-                sleeptime = const_parameters.resourceinuse_sleeptime * resourceinuse_currentretry
-                logger.info("Got \'ResourceInUseException\', waiting {} seconds before retry".format(sleeptime))
+            elif e.response['Error']['Code'] in managedErrors:
+                errorcode = e.response['Error']['Code'][:-9].lower()
+                currentRetry[errorcode] += 1
+                if currentRetry[errorcode] >= const_parameters['{}_maxretry'.format(errorcode)]:
+                    raise e
+                sleeptime = const_parameters['{}_sleeptime'.format(errorcode)]
+                sleeptime = sleeptime * currentRetry[errorcode]
+                logger.info("Got \'{}\', waiting {} seconds before retry".format(
+                    e.response['Error']['Code'], sleeptime))
                 time.sleep(sleeptime)
             else:
                 raise e
 
 
-def table_create(client, **kwargs):
+def table_create(client_ddb, **kwargs):
     table_name = kwargs['TableName']
     logger.info('Creating table \'{}\''.format(table_name))
     created = False
-    resourceinuse_currentretry = 0
+    managedErrors = ['ResourceInUseException', 'LimitExceededException']
+    currentRetry = {
+        'resourceinuse': 0,
+        'limitexceeded': 0,
+    }
 
     while not created:
         try:
-            table_status = client.create_table(**kwargs)["TableDescription"]["TableStatus"]
+            table_status = client_ddb.create_table(**kwargs)["TableDescription"]["TableStatus"]
             while table_status.upper() != 'ACTIVE':
                 logger.info('Waiting {} seconds for table \'{}\' to be created [current status: {}]'.format(const_parameters.tableoperation_sleeptime, table_name, table_status))
                 time.sleep(const_parameters.tableoperation_sleeptime)
-                table_status = client.describe_table(TableName=table_name)["Table"]["TableStatus"]
+                table_status = client_ddb.describe_table(TableName=table_name)["Table"]["TableStatus"]
             created = True
         except ClientError as e:
-            if e.response['Error']['Code'] == 'ResourceInUseException':
-                resourceinuse_currentretry += 1
-                sleeptime = const_parameters.resourceinuse_sleeptime * resourceinuse_currentretry
-                logger.info("Got \'ResourceInUseException\', waiting {} seconds before retry".format(sleeptime))
+            if e.response['Error']['Code'] in managedErrors:
+                errorcode = e.response['Error']['Code'][:-9].lower()
+                currentRetry[errorcode] += 1
+                if currentRetry[errorcode] >= const_parameters['{}_maxretry'.format(errorcode)]:
+                    raise e
+                sleeptime = const_parameters['{}_sleeptime'.format(errorcode)]
+                sleeptime = sleeptime * currentRetry[errorcode]
+                logger.info("Got \'{}\', waiting {} seconds before retry".format(
+                    e.response['Error']['Code'], sleeptime))
                 time.sleep(sleeptime)
             else:
                 raise e
@@ -649,7 +670,7 @@ def table_batch_write(client, table_name, items):
 
 
 def table_restore(table_name):
-    client = get_client_dynamodb()
+    client_ddb = get_client_dynamodb()
 
     # define the table directory
     if tarfile.is_tarfile(parameters.dumppath):
@@ -674,8 +695,8 @@ def table_restore(table_name):
         table_schema = clean_table_schema(table_schema['Table'])
 
     table_schema['TableName'] = table_name  # Use the directory name as table name
-    table_delete(client, table_name)
-    table_create(client, **table_schema)
+    table_delete(client_ddb, table_name)
+    table_create(client_ddb, **table_schema)
 
     table_dump_path_data = os.path.join(table_dump_path, const_parameters.data_dir)
     if tarfile.is_tarfile(parameters.dumppath):
@@ -724,7 +745,7 @@ def table_restore(table_name):
         while len(items) >= const_parameters.dynamodb_max_batch_write or \
                 (c_data_file == n_data_files and len(items) > 0):
             logger.debug('Current number of items: '.format(len(items)))
-            items = table_batch_write(client, table_name, items)
+            items = table_batch_write(client_ddb, table_name, items)
 
 
 @cli.command()

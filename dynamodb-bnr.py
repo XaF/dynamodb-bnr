@@ -214,7 +214,7 @@ def cli(ctx, **kwargs):
         fsplit = os.path.splitext(fname)
         if fsplit[1] == '.py':
             fname = fsplit[0]
-        ctx.obj.logfile = '{}.log'.format(fname)
+        ctx.obj.logfile = os.path.join(os.getcwd(), '{}.log'.format(fname))
 
     fh = logging.FileHandler(ctx.obj.logfile)
     ch = logging.StreamHandler()

@@ -109,6 +109,8 @@ def tar_type(path):
         tar_type = 'w:gz'
     elif fnmatch.fnmatch(path, '*.tar.bz2'):
         tar_type = 'w:bz2'
+    elif fnmatch.fnmatch(path, '*.tar'):
+        tar_type = 'w:'
     return tar_type
 
 

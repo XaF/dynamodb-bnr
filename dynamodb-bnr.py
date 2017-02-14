@@ -72,11 +72,16 @@ _global_client_s3 = None
 def get_client_dynamodb():
     global _global_client_dynamodb
     if _global_client_dynamodb is None:
-        _global_client_dynamodb = boto3.client(
-            service_name='dynamodb',
-            region_name=parameters.ddb_region,
-            aws_access_key_id=parameters.ddb_accesskey,
-            aws_secret_access_key=parameters.ddb_secretkey,
+        if parameters.ddb_profile:
+            session = boto3.Session(profile_name=parameters.ddb_profile)
+        else:
+            session = boto3.Session(
+                region_name=parameters.ddb_region,
+                aws_access_key_id=parameters.ddb_accesskey,
+                aws_secret_access_key=parameters.ddb_secretkey,
+            )
+        _global_client_dynamodb = session.client(
+            service_name='dynamodb'
         )
     return _global_client_dynamodb
 
@@ -84,11 +89,16 @@ def get_client_dynamodb():
 def get_client_s3():
     global _global_client_s3
     if _global_client_s3 is None:
-        _global_client_s3 = boto3.client(
-            service_name='s3',
-            region_name=parameters.s3_region,
-            aws_access_key_id=parameters.s3_accesskey,
-            aws_secret_access_key=parameters.s3_secretkey,
+        if parameters.s3_profile:
+            session = boto3.Session(profile_name=parameters.s3_profile)
+        else:
+            session = boto3.Session(
+                region_name=parameters.s3_region,
+                aws_access_key_id=parameters.s3_accesskey,
+                aws_secret_access_key=parameters.s3_secretkey,
+            )
+        _global_client_s3 = session.client(
+            service_name='s3'
         )
     return _global_client_s3
 
@@ -140,6 +150,9 @@ class TarFileWriter(multiprocessing.Process):
               ]),
               help='Define the specific log level')
 @click.option('--logfile', default=None)
+@click.option('--profile',
+              default=os.getenv('AWS_DEFAULT_PROFILE', None),
+              help='Define the AWS profile name (defaults to the environment variable AWS_DEFAULT_PROFILE)')
 @click.option('--accessKey',
               default=os.getenv('AWS_ACCESS_KEY_ID', None),
               help='Define the AWS default access key (defaults to the environment variable AWS_ACCESS_KEY_ID)')
@@ -149,6 +162,9 @@ class TarFileWriter(multiprocessing.Process):
 @click.option('--region',
               default=os.getenv('REGION', None),
               help='Define the AWS default region (defaults to the environment variable REGION)')
+@click.option('--ddb-profile',
+              default=os.getenv('DDB_AWS_DEFAULT_PROFILE', None),
+              help='Define the AWS DynamoDB profile name')
 @click.option('--ddb-accessKey',
               default=os.getenv('DDB_AWS_ACCESS_KEY_ID', None),
               help='Define the AWS DynamoDB access key')
@@ -162,6 +178,9 @@ class TarFileWriter(multiprocessing.Process):
               help='Activate S3 upload')
 @click.option('--s3-create-bucket/--no-s3-create-bucket', default=False,
               help='Create S3 bucket if it does not exist')
+@click.option('--s3-profile',
+              default=os.getenv('S3_AWS_DEFAULT_PROFILE', None),
+              help='Define the AWS S3 profile name')
 @click.option('--s3-accessKey',
               default=os.getenv('S3_AWS_ACCESS_KEY_ID', None),
               help='Define the AWS S3 access key')
@@ -200,27 +219,36 @@ def cli(ctx, **kwargs):
             ctx.obj.ddb_region = ctx.obj.region
         if ctx.obj.s3_region is None:
             ctx.obj.s3_region = ctx.obj.region
+    if ctx.obj.profile is not None:
+        if ctx.obj.ddb_profile is None:
+            ctx.obj.ddb_profile = ctx.obj.profile
+        if ctx.obj.s3_profile is None:
+            ctx.obj.s3_profile = ctx.obj.profile
 
     # Check that dynamodb configuration is available
-    if ctx.obj.ddb_accesskey is None \
-            or ctx.obj.ddb_secretkey is None \
-            or ctx.obj.ddb_region is None:
-        raise RuntimeError('DynamoDB configuration is incomplete (AccessKey? {}, SecretKey? {}, Region? {})'.format(
+    if ctx.obj.ddb_profile is None and \
+            (ctx.obj.ddb_accesskey is None or
+             ctx.obj.ddb_secretkey is None or
+             ctx.obj.ddb_region is None):
+        raise RuntimeError('DynamoDB configuration is incomplete (accessKey? {}, secretKey? {}, region? {}) or profile? {})'.format(
             ctx.obj.ddb_accesskey is not None,
             ctx.obj.ddb_secretkey is not None,
-            ctx.obj.ddb_region is not None))
+            ctx.obj.ddb_region is not None,
+            ctx.obj.ddb_profile is not None))
 
     # Check that s3 configuration is available if needed
     if ctx.obj.s3_upload and \
-            (ctx.obj.s3_accesskey is None or
-             ctx.obj.s3_region is None or
-             ctx.obj.s3_secretkey is None or
-             ctx.obj.s3_bucket is None):
-        raise RuntimeError('S3 configuration is incomplete (AccessKey? {}, SecretKey? {}, Region? {}, Bucket? {})'.format(
+            (ctx.obj.s3_profile is None and
+             (ctx.obj.s3_accesskey is None or
+              ctx.obj.s3_region is None or
+              ctx.obj.s3_secretkey is None or
+              ctx.obj.s3_bucket is None)):
+        raise RuntimeError('S3 configuration is incomplete (s3-accessKey? {}, secretKey? {}, region? {}, bucket? {}) or profile {}'.format(
             ctx.obj.s3_accesskey is not None,
             ctx.obj.s3_secretkey is not None,
             ctx.obj.s3_region is not None,
-            ctx.obj.s3_bucket is not None))
+            ctx.obj.s3_bucket is not None,
+            ctx.obj.s3_profile is not None))
 
     log_level = 'DEBUG' if ctx.obj.debug else ctx.obj.loglevel
     if ctx.obj.logfile is None:

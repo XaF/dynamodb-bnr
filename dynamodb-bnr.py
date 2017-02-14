@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 
 #
-# dynamodb-bnr
+# dynamodb-bnr - DynamoDB backup'n'restore python script
+#                with tarfile management
 #
 # Raphaël Beamonte <raphael.beamonte@bhvr.com>
 #

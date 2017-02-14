@@ -112,6 +112,10 @@ def tar_type(path):
     return tar_type
 
 
+def is_tarfile(path):
+    return os.path.isfile(path) and tarfile.is_tarfile(path)
+
+
 class TarFileWriter(multiprocessing.Process):
     def __init__(self, path, tarwrite_queue):
         multiprocessing.Process.__init__(self, name='TarFileWriter')
@@ -563,7 +567,7 @@ def backup(ctx, **kwargs):
 
 def get_dump_matching_table_names(table_name_wildcard):
     tables = []
-    if not tarfile.is_tarfile(parameters.dumppath):
+    if not is_tarfile(parameters.dumppath):
         try:
             dir_list = sorted(os.listdir(parameters.dumppath))
         except OSError:
@@ -701,7 +705,7 @@ def table_restore(table_name):
     client_ddb = get_client_dynamodb()
 
     # define the table directory
-    if tarfile.is_tarfile(parameters.dumppath):
+    if is_tarfile(parameters.dumppath):
         tar = tarfile.open(parameters.dumppath)
         table_dump_path = os.path.join(parameters.tar_path, table_name)
         try:
@@ -727,7 +731,7 @@ def table_restore(table_name):
     table_create(client_ddb, **table_schema)
 
     table_dump_path_data = os.path.join(table_dump_path, const_parameters.data_dir)
-    if tarfile.is_tarfile(parameters.dumppath):
+    if is_tarfile(parameters.dumppath):
         try:
             member = tar.getmember(table_dump_path_data)
             # Search for the restoration files in the tar
@@ -757,7 +761,7 @@ def table_restore(table_name):
         c_data_file += 1
         logger.info("Loading items from file {} of {}".format(c_data_file, n_data_files))
 
-        if tarfile.is_tarfile(parameters.dumppath):
+        if is_tarfile(parameters.dumppath):
             member = tar.getmember(os.path.join(table_dump_path_data, data_file))
             f = tar.extractfile(member)
 

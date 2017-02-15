@@ -12,7 +12,7 @@ import boto3
 from botocore.exceptions import ClientError
 from boto3.exceptions import S3UploadFailedError
 import click
-# import datetime
+import datetime
 import fnmatch
 import json
 import logging
@@ -75,6 +75,8 @@ const_parameters = Namespace({
         os.getenv('DYNAMODB_BNR_MAX_BATCH_WRITE', 25),
     'opensslerror_maxretry':
         os.getenv('DYNAMODB_BNR_OPENSSLERROR_MAXRETRY', 5),
+    's3_max_delete_objects':
+        os.getenv('DYNAMODB_BNR_MAX_DELETE_OBJECTS', 1000),
 })
 _global_client_dynamodb = None
 _global_client_s3 = None
@@ -236,6 +238,15 @@ class TarFileWriter(multiprocessing.Process):
               default='dynamodb-dump-%Y%m%d%H%M%S.tgz',
               help='The format of the file (if tar extension provided) or '
                    'directory used for the dump')
+@click.option('--retention-days', default=None, type=int,
+              help='The retention policy for the backups, in the form of '
+                   '\'keep all backups for X days\'')
+@click.option('--retention-weeks', default=None, type=int,
+              help='The retention policy for the backups, in the form of '
+                   '\'keep weekly backups for X weeks\'')
+@click.option('--retention-months', default=None, type=int,
+              help='The retention policy for the backups, in the form of '
+                   '\'keep monthly backups for X months\'')
 @click.pass_context
 def cli(ctx, **kwargs):
     ctx.obj.update(kwargs)
@@ -316,6 +327,130 @@ def cli(ctx, **kwargs):
     logger.addHandler(ch)
 
     logger.info('Loglevel set to {}'.format(log_level))
+
+
+def days_difference(d1, d2):
+    return int((d1 - d2).days)
+
+
+def weeks_difference(d1, d2):
+    d1isocal = d1.isocalendar()
+    d2isocal = d2.isocalendar()
+
+    return (d1isocal[0] - d2isocal[0]) * 52 + (d1isocal[1] - d2isocal[1])
+
+
+def months_difference(d1, d2):
+    return (d1.year - d2.year) * 12 + (d1.month - d2.month)
+
+
+def local_listdir():
+    if os.path.isdir(parameters.dump_dir):
+        for fname in os.listdir(parameters.dump_dir):
+            yield fname
+
+
+def s3_listdir():
+    client_s3 = get_client_s3()
+    more_objects = True
+
+    objects_list = client_s3.list_objects_v2(
+        Bucket=parameters.s3_bucket,
+        Prefix=parameters.dump_format.split('%')[0],
+    )
+    while more_objects and objects_list['KeyCount'] > 0:
+        for object_info in objects_list['Contents']:
+            object_name = object_info['Key']
+            yield object_name
+
+        if 'NextContinuationToken' in objects_list:
+            objects_list = client_s3.list_objects_v2(
+                Bucket=parameters.s3_bucket,
+                Prefix=parameters.dump_format.split('%')[0],
+                ContinuationToken=objects_list['NextContinuationToken'],
+            )
+        else:
+            more_objects = False
+
+
+def local_removefiles(files):
+    for f in files:
+        fpath = os.path.join(parameters.dump_dir, f)
+        if os.path.isdir(f):
+            logger.info('Removing directory {}'.format(fpath))
+            shutil.rmtree(fpath)
+        else:
+            logger.info('Removing file {}'.format(fpath))
+            os.remove(fpath)
+
+
+def s3_delete_objects(client_s3, objects):
+    delete_requests = [{'Key': obj} for obj in objects[:const_parameters.s3_max_delete_objects]]
+
+    response = client_s3.delete_objects(
+        Bucket=parameters.s3_bucket,
+        Delete={'Objects': delete_requests},
+    )
+
+    returnedObjects = []
+    if 'Errors' in response:
+        for error in response['Errors']:
+            logger.warning('Error when deleting item {}: {} - {}'.format(
+                error['Key'], error['Code'], error['Message']))
+            returnedObjects.append(error['Key'])
+
+    objects[:const_parameters.s3_max_delete_objects] = returnedObjects
+
+    return objects
+
+
+def s3_removefiles(objects):
+    client_s3 = get_client_s3()
+    objects = list(objects)
+
+    while len(objects) > 0:
+        logger.debug('Current number of objects to delete: '.format(len(objects)))
+        objects = s3_delete_objects(client_s3, objects)
+
+
+def apply_retention_policy(days, weeks, months,
+                           listdircall=local_listdir,
+                           removecall=local_removefiles):
+    # If no retention policy is defined
+    if days is None and weeks is None and months is None:
+        return
+
+    now = datetime.datetime.now()
+    keep_weeks = {}
+    keep_months = {}
+    found_backups = []
+
+    matching_fname = re.sub('(%.)+', '*', parameters.dump_format.replace('*', '\\*'))
+    for fname in listdircall():
+        if fnmatch.fnmatch(fname, matching_fname):
+            ftime = datetime.datetime.strptime(fname, parameters.dump_format)
+
+            if days is not None and days_difference(now, ftime) < days:
+                continue
+
+            found_backups.append(fname)
+            if weeks is not None and \
+                    (0 if days is not None
+                     else -1) < weeks_difference(now, ftime) <= weeks:
+                week_token = '{}{}'.format(*['%02d' % x for x in ftime.isocalendar()[0:2]])
+                if week_token not in keep_weeks or ftime > keep_weeks[week_token][1]:
+                    keep_weeks[week_token] = (fname, ftime)
+
+            if months is not None and \
+                    (0 if days is not None or
+                     weeks is not None
+                     else -1) < months_difference(now, ftime) <= months:
+                month_token = '{}{}'.format(ftime.year, '%02d' % ftime.month)
+                if month_token not in keep_months or ftime > keep_months[month_token][1]:
+                    keep_months[month_token] = (fname, ftime)
+
+    removecall(set(found_backups) - set([x[0] for x in keep_weeks.values()] +
+                                        [x[0] for x in keep_months.values()]))
 
 
 def get_dynamo_matching_table_names(table_name_wildcard):
@@ -523,6 +658,16 @@ def parallel_workers(name, target, tables):
 def backup(ctx, **kwargs):
     ctx.obj.update(kwargs)
     if ctx.obj.dump_path is None:
+        if ctx.obj.s3_upload:
+            listdir, removefiles = s3_listdir, s3_removefiles
+        else:
+            listdir, removefiles = local_listdir, local_removefiles
+        apply_retention_policy(ctx.obj.retention_days,
+                               ctx.obj.retention_weeks,
+                               ctx.obj.retention_months,
+                               listdir,
+                               removefiles)
+
         ctx.obj.dump_path = os.path.join(
             ctx.obj.dump_dir,
             time.strftime(ctx.obj.dump_format))

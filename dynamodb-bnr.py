@@ -506,14 +506,16 @@ def clean_table_schema(table_schema):
     for info in ('NumberOfDecreasesToday', 'LastIncreaseDateTime', 'LastDecreaseDateTime'):
         if info in table_schema['ProvisionedThroughput']:
             del table_schema['ProvisionedThroughput'][info]
-    if 'GlobalSecondaryIndexes' in table_schema:
-        for i in xrange(len(table_schema['GlobalSecondaryIndexes'])):
-            for info in ('IndexSizeBytes', 'IndexStatus', 'IndexArn', 'ItemCount'):
-                if info in table_schema['GlobalSecondaryIndexes'][i]:
-                    del table_schema['GlobalSecondaryIndexes'][i][info]
-            for info in ('NumberOfDecreasesToday', 'LastIncreaseDateTime', 'LastDecreaseDateTime'):
-                if info in table_schema['GlobalSecondaryIndexes'][i]['ProvisionedThroughput']:
-                    del table_schema['GlobalSecondaryIndexes'][i]['ProvisionedThroughput'][info]
+    for index_type in ('GlobalSecondaryIndexes', 'LocalSecondaryIndexes'):
+        if index_type in table_schema:
+            for i in xrange(len(table_schema[index_type])):
+                for info in ('IndexSizeBytes', 'IndexStatus', 'IndexArn', 'ItemCount'):
+                    if info in table_schema[index_type][i]:
+                        del table_schema[index_type][i][info]
+                if 'ProvisionedThroughput' in table_schema[index_type][i]:
+                    for info in ('NumberOfDecreasesToday', 'LastIncreaseDateTime', 'LastDecreaseDateTime'):
+                        if info in table_schema[index_type][i]['ProvisionedThroughput']:
+                            del table_schema[index_type][i]['ProvisionedThroughput'][info]
 
     return table_schema
 
@@ -937,7 +939,8 @@ def table_restore(table_name):
             table_schema = json.load(f)
 
     if 'Table' in table_schema:
-        table_schema = clean_table_schema(table_schema['Table'])
+        table_schema = table_schema['Table']
+    table_schema = clean_table_schema(table_schema)
 
     table_schema['TableName'] = table_name  # Use the directory name as table name
     table_delete(client_ddb, table_name)

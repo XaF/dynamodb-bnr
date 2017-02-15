@@ -1,5 +1,6 @@
 FROM python:2.7
 
-RUN pip install boto3 click pyopenssl
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt
 
 COPY dynamodb-bnr.py /usr/local/bin/dynamodb-bnr

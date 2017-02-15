@@ -419,8 +419,7 @@ def table_backup(table_name):
         items_list = manage_db_scan(client_ddb, TableName=table_name)
         while more_items and items_list['ScannedCount'] > 0:
             logger.info("Backing up items for table \'{}\' ({})".format(table_name, more_items))
-            items_list = items_list['Items']
-            jdump = json.dumps(items_list,
+            jdump = json.dumps(items_list['Items'],
                                # cls=DateTimeEncoder,
                                indent=const_parameters.json_indent)
 

@@ -115,12 +115,13 @@ def get_client_s3():
 
 def tar_type(path):
     tar_type = None
-    if fnmatch.fnmatch(path, '*.tar.gz') or fnmatch.fnmatch(path, '*.tgz'):
-        tar_type = 'w:gz'
-    elif fnmatch.fnmatch(path, '*.tar.bz2'):
-        tar_type = 'w:bz2'
-    elif fnmatch.fnmatch(path, '*.tar'):
-        tar_type = 'w:'
+    if not os.path.isdir(path):
+        if fnmatch.fnmatch(path, '*.tar.gz') or fnmatch.fnmatch(path, '*.tgz'):
+            tar_type = 'w:gz'
+        elif fnmatch.fnmatch(path, '*.tar.bz2') or fnmatch.fnmatch(path, '*.tbz2'):
+            tar_type = 'w:bz2'
+        elif fnmatch.fnmatch(path, '*.tar'):
+            tar_type = 'w:'
     return tar_type
 
 

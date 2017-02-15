@@ -56,15 +56,24 @@ const_parameters = Namespace({
     'json_indent': 2,
     'schema_file': 'schema.json',
     'data_dir': 'data',
-    'throughputexceeded_sleeptime': os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_SLEEPTIME', 10),
-    'throughputexceeded_maxretry': os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_MAXRETRY', 5),
-    'resourceinuse_sleeptime': os.getenv('DYNAMODB_BNR_RESOURCEINUSE_SLEEPTIME', 10),
-    'resourceinuse_maxretry': os.getenv('DYNAMODB_BNR_RESOURCEINUSE_MAXRETRY', 5),
-    'limitexceeded_sleeptime': os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_SLEEPTIME', 15),
-    'limitexceeded_maxretry': os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_MAXRETRY', 5),
-    'tableoperation_sleeptime': os.getenv('DYNAMODB_BNR_TABLEOPERATION_SLEEPTIME', 5),
-    'dynamodb_max_batch_write': os.getenv('DYNAMODB_BNR_MAX_BATCH_WRITE', 25),
-    'opensslerror_maxretry': os.getenv('DYNAMODB_BNR_OPENSSLERROR_MAXRETRY', 5),
+    'throughputexceeded_sleeptime':
+        os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_SLEEPTIME', 10),
+    'throughputexceeded_maxretry':
+        os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_MAXRETRY', 5),
+    'resourceinuse_sleeptime':
+        os.getenv('DYNAMODB_BNR_RESOURCEINUSE_SLEEPTIME', 10),
+    'resourceinuse_maxretry':
+        os.getenv('DYNAMODB_BNR_RESOURCEINUSE_MAXRETRY', 5),
+    'limitexceeded_sleeptime':
+        os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_SLEEPTIME', 15),
+    'limitexceeded_maxretry':
+        os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_MAXRETRY', 5),
+    'tableoperation_sleeptime':
+        os.getenv('DYNAMODB_BNR_TABLEOPERATION_SLEEPTIME', 5),
+    'dynamodb_max_batch_write':
+        os.getenv('DYNAMODB_BNR_MAX_BATCH_WRITE', 25),
+    'opensslerror_maxretry':
+        os.getenv('DYNAMODB_BNR_OPENSSLERROR_MAXRETRY', 5),
 })
 _global_client_dynamodb = None
 _global_client_s3 = None
@@ -159,16 +168,20 @@ class TarFileWriter(multiprocessing.Process):
 @click.option('--logfile', default=None)
 @click.option('--profile',
               default=os.getenv('AWS_DEFAULT_PROFILE', None),
-              help='Define the AWS profile name (defaults to the environment variable AWS_DEFAULT_PROFILE)')
+              help='Define the AWS profile name (defaults to the environment '
+                   'variable AWS_DEFAULT_PROFILE)')
 @click.option('--accessKey',
               default=os.getenv('AWS_ACCESS_KEY_ID', None),
-              help='Define the AWS default access key (defaults to the environment variable AWS_ACCESS_KEY_ID)')
+              help='Define the AWS default access key (defaults to the '
+                   'environment variable AWS_ACCESS_KEY_ID)')
 @click.option('--secretKey',
               default=os.getenv('AWS_SECRET_ACCESS_KEY', None),
-              help='Define the AWS default secret key (defaults to the environment variable AWS_SECRET_ACCESS_KEY)')
+              help='Define the AWS default secret key (defaults to the '
+                   'environment variable AWS_SECRET_ACCESS_KEY)')
 @click.option('--region',
               default=os.getenv('REGION', None),
-              help='Define the AWS default region (defaults to the environment variable REGION)')
+              help='Define the AWS default region (defaults to the environment '
+                   'variable REGION)')
 @click.option('--ddb-profile',
               default=os.getenv('DDB_AWS_DEFAULT_PROFILE', None),
               help='Define the AWS DynamoDB profile name')
@@ -202,7 +215,8 @@ class TarFileWriter(multiprocessing.Process):
               help='Define the AWS S3 bucket')
 @click.option('--table',
               default='*',
-              help='The table to backup or restore (\'*\' means all tables, \'t*\' means all tables starting with \'t\')')
+              help='The table to backup or restore (\'*\' means all tables, '
+                   '\'t*\' means all tables starting with \'t\')')
 @click.option('--dumpPath',
               default=None,
               help='The path of the dump directory')
@@ -237,11 +251,13 @@ def cli(ctx, **kwargs):
             (ctx.obj.ddb_accesskey is None or
              ctx.obj.ddb_secretkey is None or
              ctx.obj.ddb_region is None):
-        raise RuntimeError('DynamoDB configuration is incomplete (accessKey? {}, secretKey? {}, region? {}) or profile? {})'.format(
-            ctx.obj.ddb_accesskey is not None,
-            ctx.obj.ddb_secretkey is not None,
-            ctx.obj.ddb_region is not None,
-            ctx.obj.ddb_profile is not None))
+        raise RuntimeError(('DynamoDB configuration is incomplete '
+                            '(accessKey? {}, secretKey? {}, region? {}'
+                            ') or profile? {})').format(
+                                ctx.obj.ddb_accesskey is not None,
+                                ctx.obj.ddb_secretkey is not None,
+                                ctx.obj.ddb_region is not None,
+                                ctx.obj.ddb_profile is not None))
 
     # Check that s3 configuration is available if needed
     if ctx.obj.s3_upload and \
@@ -250,12 +266,14 @@ def cli(ctx, **kwargs):
               ctx.obj.s3_region is None or
               ctx.obj.s3_secretkey is None or
               ctx.obj.s3_bucket is None)):
-        raise RuntimeError('S3 configuration is incomplete (s3-accessKey? {}, secretKey? {}, region? {}, bucket? {}) or profile {}'.format(
-            ctx.obj.s3_accesskey is not None,
-            ctx.obj.s3_secretkey is not None,
-            ctx.obj.s3_region is not None,
-            ctx.obj.s3_bucket is not None,
-            ctx.obj.s3_profile is not None))
+        raise RuntimeError(('S3 configuration is incomplete '
+                            '(accessKey? {}, secretKey? {}, region? {}, '
+                            'bucket? {}) or profile {}').format(
+                                ctx.obj.s3_accesskey is not None,
+                                ctx.obj.s3_secretkey is not None,
+                                ctx.obj.s3_region is not None,
+                                ctx.obj.s3_bucket is not None,
+                                ctx.obj.s3_profile is not None))
 
     log_level = 'DEBUG' if ctx.obj.debug else ctx.obj.loglevel
     if ctx.obj.logfile is None:
@@ -268,7 +286,8 @@ def cli(ctx, **kwargs):
     fh = logging.FileHandler(ctx.obj.logfile)
     ch = logging.StreamHandler()
 
-    formatter = logging.Formatter('%(asctime)s::%(name)s::%(processName)s::%(levelname)s::%(message)s')
+    formatter = logging.Formatter('%(asctime)s::%(name)s::%(processName)s'
+                                  '::%(levelname)s::%(message)s')
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
 
@@ -316,8 +335,10 @@ def manage_db_scan(client_ddb, **kwargs):
                 raise e
 
             throughputexceeded_currentretry += 1
-            sleeptime = const_parameters.throughputexceeded_sleeptime * throughputexceeded_currentretry
-            logger.info("Got \'ProvisionedThroughputExceededException\', waiting {} seconds before retry".format(sleeptime))
+            sleeptime = const_parameters.throughputexceeded_sleeptime
+            sleeptime *= throughputexceeded_currentretry
+            logger.info(('Got \'ProvisionedThroughputExceededException\', '
+                         'waiting {} seconds before retry').format(sleeptime))
             time.sleep(sleeptime)
 
     return items_list
@@ -381,13 +402,15 @@ def table_backup(table_name):
 
     # get table schema
     if parameters.only is None or parameters.only == 'schema':
-        logger.info("Backing up table schema for table \'{}\'".format(table_name))
+        logger.info(('Backing up table schema '
+                     'for table \'{}\'').format(table_name))
 
         table_schema = None
         current_retry = 0
         while table_schema is None:
             try:
-                table_schema = client_ddb.describe_table(TableName=table_name)['Table']
+                table_schema = client_ddb.describe_table(TableName=table_name)
+                table_schema = table_schema['Table']
             except (OpenSSL.SSL.SysCallError, OpenSSL.SSL.Error) as e:
                 if current_retry >= const_parameters.opensslerror_maxretry:
                     raise e
@@ -400,14 +423,15 @@ def table_backup(table_name):
         jdump = json.dumps(table_schema,
                            # cls=DateTimeEncoder,
                            indent=const_parameters.json_indent)
+        fpath = os.path.join(table_dump_path, const_parameters.schema_file)
         if parameters.tar_path is not None:
             f = StringIO.StringIO(jdump)
-            info = tarfile.TarInfo(name=os.path.join(table_dump_path, const_parameters.schema_file))
+            info = tarfile.TarInfo(name=fpath)
             info.size = f.len
             info.mode = 0o644
             parameters.tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
         else:
-            with open(os.path.join(table_dump_path, const_parameters.schema_file), 'w+') as f:
+            with open(fpath, 'w+') as f:
                 f.write(jdump)
 
     # get table items
@@ -418,25 +442,30 @@ def table_backup(table_name):
 
         items_list = manage_db_scan(client_ddb, TableName=table_name)
         while more_items and items_list['ScannedCount'] > 0:
-            logger.info("Backing up items for table \'{}\' ({})".format(table_name, more_items))
+            logger.info(('Backing up items for table'
+                         ' \'{}\' ({})').format(table_name, more_items))
             jdump = json.dumps(items_list['Items'],
                                # cls=DateTimeEncoder,
                                indent=const_parameters.json_indent)
 
+            fpath = os.path.join(
+                table_dump_path_data,
+                '{}.json'.format(str(more_items).zfill(10)))
             if parameters.tar_path is not None:
                 f = StringIO.StringIO(jdump)
-                info = tarfile.TarInfo(name=os.path.join(table_dump_path_data, '{}.json'.format(str(more_items).zfill(10))))
+                info = tarfile.TarInfo(name=fpath)
                 info.size = f.len
                 info.mode = 0o644
                 parameters.tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
             else:
-                with open(os.path.join(table_dump_path_data, '{}.json'.format(str(more_items).zfill(10))), 'w+') as f:
+                with open(fpath, 'w+') as f:
                     f.write(jdump)
 
             if 'LastEvaluatedKey' in items_list:
-                items_list = manage_db_scan(client_ddb,
-                                            TableName=table_name,
-                                            ExclusiveStartKey=items_list['LastEvaluatedKey'])
+                items_list = manage_db_scan(
+                    client_ddb,
+                    TableName=table_name,
+                    ExclusiveStartKey=items_list['LastEvaluatedKey'])
                 more_items += 1
             else:
                 more_items = False
@@ -478,7 +507,9 @@ def parallel_workers(name, target, tables):
 def backup(ctx, **kwargs):
     ctx.obj.update(kwargs)
     if ctx.obj.dumppath is None:
-        ctx.obj.dumppath = os.path.join(os.getcwd(), 'dump-{}.tgz'.format(time.strftime('%Y%m%d%H%M%S')))
+        ctx.obj.dumppath = os.path.join(
+            os.getcwd(),
+            'dump-{}.tgz'.format(time.strftime('%Y%m%d%H%M%S')))
 
     if tar_type(ctx.obj.dumppath) is not None:
         ctx.obj.tar_path = 'dump'
@@ -496,7 +527,8 @@ def backup(ctx, **kwargs):
         logger.error('no tables found for \'{}\''.format(ctx.obj.table))
         sys.exit(1)
 
-    logger.info('The following tables will be backed up: {}'.format(', '.join(tables_to_backup)))
+    logger.info('The following tables will be backed up: {}'.format(
+        ', '.join(tables_to_backup)))
     logger.info('Tables will be backed up in \'{}\''.format(ctx.obj.dumppath))
 
     badReturn = parallel_workers(
@@ -511,7 +543,10 @@ def backup(ctx, **kwargs):
     if badReturn:
         nErrors = len(badReturn)
         logger.info('Backup ended with {} error(s)'.format(nErrors))
-        raise RuntimeError('{} error(s) during backup for processes: {}'.format(nErrors, ', '.join([x.name for x in badReturn])))
+        raise RuntimeError(('{} error(s) during backup '
+                            'for processes: {}').format(
+                           nErrors,
+                           ', '.join([x.name for x in badReturn])))
     else:
         logger.info('Backup ended without error')
 
@@ -607,12 +642,17 @@ def table_delete(client_ddb, table_name):
 
     while not deleted:
         try:
-            table_status = client_ddb.delete_table(TableName=table_name)["TableDescription"]["TableStatus"]
+            table_status = client_ddb.delete_table(TableName=table_name)
+            table_status = table_status["TableDescription"]["TableStatus"]
             while True:
-                logger.info('Waiting {} seconds for table \'{}\' to be deleted [current status: {}]'.format(
-                    const_parameters.tableoperation_sleeptime, table_name, table_status))
+                logger.info(('Waiting {} seconds for table \'{}\' '
+                             'to be deleted [current status: {}]').format(
+                            const_parameters.tableoperation_sleeptime,
+                            table_name,
+                            table_status))
                 time.sleep(const_parameters.tableoperation_sleeptime)
-                table_status = client_ddb.describe_table(TableName=table_name)["Table"]["TableStatus"]
+                table_status = client_ddb.describe_table(TableName=table_name)
+                table_status = table_status["Table"]["TableStatus"]
         except ClientError as e:
             if e.response['Error']['Code'] == 'ResourceNotFoundException':
                 deleted = True
@@ -644,9 +684,14 @@ def table_create(client_ddb, **kwargs):
         try:
             table_status = client_ddb.create_table(**kwargs)["TableDescription"]["TableStatus"]
             while table_status.upper() != 'ACTIVE':
-                logger.info('Waiting {} seconds for table \'{}\' to be created [current status: {}]'.format(const_parameters.tableoperation_sleeptime, table_name, table_status))
+                logger.info(('Waiting {} seconds for table \'{}\' '
+                             'to be created [current status: {}]').format(
+                            const_parameters.tableoperation_sleeptime,
+                            table_name,
+                            table_status))
                 time.sleep(const_parameters.tableoperation_sleeptime)
-                table_status = client_ddb.describe_table(TableName=table_name)["Table"]["TableStatus"]
+                table_status = client_ddb.describe_table(TableName=table_name)
+                table_status = table_status["Table"]["TableStatus"]
             created = True
         except ClientError as e:
             if e.response['Error']['Code'] in managedErrors:
@@ -689,8 +734,10 @@ def table_batch_write(client, table_name, items):
                 raise e
 
             throughputexceeded_currentretry += 1
-            sleeptime = const_parameters.throughputexceeded_sleeptime * throughputexceeded_currentretry
-            logger.info("Got \'ProvisionedThroughputExceededException\', waiting {} seconds before retry".format(sleeptime))
+            sleeptime = const_parameters.throughputexceeded_sleeptime
+            sleeptime *= throughputexceeded_currentretry
+            logger.info(('Got \'ProvisionedThroughputExceededException\', '
+                         'waiting {} seconds before retry').format(sleeptime))
             time.sleep(sleeptime)
 
     returnedItems = []
@@ -789,14 +836,16 @@ def restore(ctx, **kwargs):
     if ctx.obj.dumppath is None:
         ctx.obj.dumppath = os.path.join(os.getcwd(), 'dump')
 
-    logger.info('Looking for tables to restore in \'{}\''.format(ctx.obj.dumppath))
+    logger.info('Looking for tables to restore in \'{}\''.format(
+        ctx.obj.dumppath))
 
     tables_to_restore = get_dump_matching_table_names(ctx.obj.table)
     if not tables_to_restore:
         logger.error('no tables found for \'{}\''.format(ctx.obj.table))
         sys.exit(1)
 
-    logger.info('The following tables will be restored: {}'.format(', '.join(tables_to_restore)))
+    logger.info('The following tables will be restored: {}'.format(
+        ', '.join(tables_to_restore)))
 
     badReturn = parallel_workers(
         name='RestoreProcess({})',
@@ -805,7 +854,10 @@ def restore(ctx, **kwargs):
     if badReturn:
         nErrors = len(badReturn)
         logger.info('Restoration ended with {} error(s)'.format(nErrors))
-        raise RuntimeError('{} error(s) during restoration for processes: {}'.format(nErrors, ', '.join([x.name for x in badReturn])))
+        raise RuntimeError(('{} error(s) during restoration '
+                            'for processes: {}').format(
+                                nErrors,
+                                ', '.join([x.name for x in badReturn])))
     else:
         logger.info('Restoration ended without error')
 

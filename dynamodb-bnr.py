@@ -202,8 +202,8 @@ class TarFileWriter(multiprocessing.Process):
 @click.option('--ddb-region',
               default=os.getenv('DDB_REGION', None),
               help='Define the AWS DynamoDB region')
-@click.option('--s3-upload/--no-s3-upload', default=False,
-              help='Activate S3 upload')
+@click.option('--s3/--no-s3', default=False,
+              help='Activate S3 mode')
 @click.option('--s3-create-bucket/--no-s3-create-bucket', default=False,
               help='Create S3 bucket if it does not exist')
 @click.option('--s3-profile',
@@ -287,7 +287,7 @@ def cli(ctx, **kwargs):
                                 ctx.obj.ddb_profile is not None))
 
     # Check that s3 configuration is available if needed
-    if ctx.obj.s3_upload and \
+    if ctx.obj.s3 and \
             (ctx.obj.s3_profile is None and
              (ctx.obj.s3_accesskey is None or
               ctx.obj.s3_region is None or
@@ -658,7 +658,7 @@ def parallel_workers(name, target, tables):
 def backup(ctx, **kwargs):
     ctx.obj.update(kwargs)
     if ctx.obj.dump_path is None:
-        if ctx.obj.s3_upload:
+        if ctx.obj.s3:
             listdir, removefiles = s3_listdir, s3_removefiles
         else:
             listdir, removefiles = local_listdir, local_removefiles
@@ -712,7 +712,7 @@ def backup(ctx, **kwargs):
         logger.info('Backup ended without error')
 
     # Upload to s3 if requested
-    if ctx.obj.s3_upload:
+    if ctx.obj.s3:
         logger.info('Uploading files to S3')
         client_s3 = get_client_s3()
 

@@ -19,6 +19,7 @@ import logging
 import multiprocessing
 import OpenSSL
 import os
+import re
 import shutil
 import StringIO
 import sys
@@ -129,6 +130,10 @@ def is_tarfile(path):
     return os.path.isfile(path) and tarfile.is_tarfile(path)
 
 
+def is_dumppath(path):
+    return os.path.isdir(path) or tarfile.is_tarfile(path)
+
+
 class TarFileWriter(multiprocessing.Process):
     def __init__(self, path, tarwrite_queue):
         multiprocessing.Process.__init__(self, name='TarFileWriter')
@@ -218,9 +223,19 @@ class TarFileWriter(multiprocessing.Process):
               default='*',
               help='The table to backup or restore (\'*\' means all tables, '
                    '\'t*\' means all tables starting with \'t\')')
-@click.option('--dumpPath',
+@click.option('--dump-path',
               default=None,
-              help='The path of the dump directory')
+              help='The path to the dump directory; if specified, neither '
+                   '--dump-dir nor --dump-format will be used.')
+@click.option('--dump-dir',
+              default=os.getcwd(),
+              help='The path to the dump directory, in which the dump '
+                   'file/directory will be created, depending on the '
+                   '--dump-format')
+@click.option('--dump-format',
+              default='dynamodb-dump-%Y%m%d%H%M%S.tgz',
+              help='The format of the file (if tar extension provided) or '
+                   'directory used for the dump')
 @click.pass_context
 def cli(ctx, **kwargs):
     ctx.obj.update(kwargs)
@@ -374,7 +389,7 @@ def table_backup(table_name):
     if parameters.tar_path is not None:
         table_dump_path = os.path.join(parameters.tar_path, table_name)
     else:
-        table_dump_path = os.path.join(parameters.dumppath, table_name)
+        table_dump_path = os.path.join(parameters.dump_path, table_name)
 
     # Make the data directory if it does not exist
     table_dump_path_data = os.path.join(table_dump_path, const_parameters.data_dir)
@@ -507,15 +522,15 @@ def parallel_workers(name, target, tables):
 @click.pass_context
 def backup(ctx, **kwargs):
     ctx.obj.update(kwargs)
-    if ctx.obj.dumppath is None:
-        ctx.obj.dumppath = os.path.join(
-            os.getcwd(),
-            'dump-{}.tgz'.format(time.strftime('%Y%m%d%H%M%S')))
+    if ctx.obj.dump_path is None:
+        ctx.obj.dump_path = os.path.join(
+            ctx.obj.dump_dir,
+            time.strftime(ctx.obj.dump_format))
 
-    if tar_type(ctx.obj.dumppath) is not None:
+    if tar_type(ctx.obj.dump_path) is not None:
         ctx.obj.tar_path = 'dump'
         ctx.obj.tarwrite_queue = multiprocessing.JoinableQueue()
-        tarwrite_process = TarFileWriter(ctx.obj.dumppath, ctx.obj.tarwrite_queue)
+        tarwrite_process = TarFileWriter(ctx.obj.dump_path, ctx.obj.tarwrite_queue)
         tarwrite_process.start()
 
         info = tarfile.TarInfo(ctx.obj.tar_path)
@@ -530,7 +545,7 @@ def backup(ctx, **kwargs):
 
     logger.info('The following tables will be backed up: {}'.format(
         ', '.join(tables_to_backup)))
-    logger.info('Tables will be backed up in \'{}\''.format(ctx.obj.dumppath))
+    logger.info('Tables will be backed up in \'{}\''.format(ctx.obj.dump_path))
 
     badReturn = parallel_workers(
         name='BackupProcess({})',
@@ -572,19 +587,19 @@ def backup(ctx, **kwargs):
 
         # Upload content
         if ctx.obj.tar_path is not None:
-            s3path = os.path.basename(ctx.obj.dumppath)
+            s3path = os.path.basename(ctx.obj.dump_path)
             if badReturn:
                 s3path = '{}~incomplete'.format(s3path)
             try:
-                client_s3.upload_file(ctx.obj.dumppath, ctx.obj.s3_bucket, s3path)
+                client_s3.upload_file(ctx.obj.dump_path, ctx.obj.s3_bucket, s3path)
             except S3UploadFailedError as e:
                 logger.exception(e)
                 raise e
             s3logfname = '{}.log'.format(s3path)
         else:
-            dumpdir = os.path.basename(ctx.obj.dumppath)
-            dumppathlen = len(ctx.obj.dumppath) + 1
-            for path, dirs, files in os.walk(ctx.obj.dumppath):
+            dumpdir = os.path.basename(ctx.obj.dump_path)
+            dumppathlen = len(ctx.obj.dump_path) + 1
+            for path, dirs, files in os.walk(ctx.obj.dump_path):
                 for f in files:
                     filepath = os.path.join(path, f)
                     s3path = os.path.join(dumpdir, filepath[dumppathlen:])
@@ -605,18 +620,18 @@ def backup(ctx, **kwargs):
 
 def get_dump_matching_table_names(table_name_wildcard):
     tables = []
-    if not is_tarfile(parameters.dumppath):
+    if not is_tarfile(parameters.dump_path):
         try:
-            dir_list = sorted(os.listdir(parameters.dumppath))
+            dir_list = sorted(os.listdir(parameters.dump_path))
         except OSError:
-            logger.info("Cannot find \"{}\"".format(parameters.dumppath))
+            logger.info("Cannot find \"{}\"".format(parameters.dump_path))
             sys.exit(1)
 
         for dir_name in dir_list:
             if fnmatch.fnmatch(dir_name, table_name_wildcard):
                 tables.append(dir_name)
     else:
-        tar = tarfile.open(parameters.dumppath)
+        tar = tarfile.open(parameters.dump_path)
         members = sorted(tar.getmembers(), key=lambda x: x.name)
         for member in members:
             if member.isfile() and os.path.basename(member.name) == const_parameters.schema_file:
@@ -755,8 +770,8 @@ def table_restore(table_name):
     client_ddb = get_client_dynamodb()
 
     # define the table directory
-    if is_tarfile(parameters.dumppath):
-        tar = tarfile.open(parameters.dumppath)
+    if is_tarfile(parameters.dump_path):
+        tar = tarfile.open(parameters.dump_path)
         table_dump_path = os.path.join(parameters.tar_path, table_name)
         try:
             member = tar.getmember(os.path.join(table_dump_path, const_parameters.schema_file))
@@ -766,7 +781,7 @@ def table_restore(table_name):
         except KeyError as e:
             raise RuntimeError('Schema of table \'{}\' not found'.format(table_name))
     else:
-        table_dump_path = os.path.join(parameters.dumppath, table_name)
+        table_dump_path = os.path.join(parameters.dump_path, table_name)
         if not os.path.isdir(table_dump_path):
             raise RuntimeError('Schema of table \'{}\' not found'.format(table_name))
 
@@ -781,7 +796,7 @@ def table_restore(table_name):
     table_create(client_ddb, **table_schema)
 
     table_dump_path_data = os.path.join(table_dump_path, const_parameters.data_dir)
-    if is_tarfile(parameters.dumppath):
+    if is_tarfile(parameters.dump_path):
         try:
             member = tar.getmember(table_dump_path_data)
             # Search for the restoration files in the tar
@@ -811,7 +826,7 @@ def table_restore(table_name):
         c_data_file += 1
         logger.info("Loading items from file {} of {}".format(c_data_file, n_data_files))
 
-        if is_tarfile(parameters.dumppath):
+        if is_tarfile(parameters.dump_path):
             member = tar.getmember(os.path.join(table_dump_path_data, data_file))
             f = tar.extractfile(member)
 
@@ -831,14 +846,40 @@ def table_restore(table_name):
 
 
 @cli.command()
+@click.option('--restore-last', is_flag=True, default=False,
+              help='Restore the last available backup according to the dump format')
 @click.pass_context
 def restore(ctx, **kwargs):
     ctx.obj.update(kwargs)
-    if ctx.obj.dumppath is None:
-        ctx.obj.dumppath = os.path.join(os.getcwd(), 'dump')
+
+    if ctx.obj.dump_path is None and ctx.obj.restore_last:
+        matching_fname = re.sub('(%.)+', '*', ctx.obj.dump_format.replace('*', '\\*'))
+        if os.path.isdir(ctx.obj.dump_dir):
+            most_recent = None
+            for f in os.listdir(ctx.obj.dump_dir):
+                fpath = os.path.join(ctx.obj.dump_dir, f)
+                if fnmatch.fnmatch(f, matching_fname) and is_dumppath(fpath):
+                    t = time.strptime(f, ctx.obj.dump_format)
+                    if most_recent is None or t > most_recent[1]:
+                        most_recent = (fpath, t)
+            if most_recent is None:
+                raise RuntimeError(('No dump found in directory \'{}\' '
+                                    'for format \'{}\'').format(
+                                   ctx.obj.dump_dir,
+                                   ctx.obj.dump_format))
+
+            ctx.obj.dump_path = most_recent[0]
+
+    if ctx.obj.dump_path is None or not os.path.exists(ctx.obj.dump_path):
+        raise RuntimeError('No dump specified to restore; please use --dump-path')
+
+    # Check dump path validity
+    if not is_dumppath(ctx.obj.dump_path):
+        raise RuntimeError(('Path \'{}\' is neither a directory '
+                            'nor a tar archive').format(ctx.obj.dump_path))
 
     logger.info('Looking for tables to restore in \'{}\''.format(
-        ctx.obj.dumppath))
+        ctx.obj.dump_path))
 
     tables_to_restore = get_dump_matching_table_names(ctx.obj.table)
     if not tables_to_restore:

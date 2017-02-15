@@ -204,6 +204,8 @@ class TarFileWriter(multiprocessing.Process):
               help='Define the AWS DynamoDB region')
 @click.option('--s3/--no-s3', default=False,
               help='Activate S3 mode')
+@click.option('--s3-sse', is_flag=True, default=False,
+              help='Use server side encryption (AES256)')
 @click.option('--s3-create-bucket/--no-s3-create-bucket', default=False,
               help='Create S3 bucket if it does not exist')
 @click.option('--s3-profile',
@@ -721,6 +723,10 @@ def backup(ctx, **kwargs):
         logger.info('Uploading files to S3')
         client_s3 = get_client_s3()
 
+        s3_args = {}
+        if ctx.obj.s3_sse:
+            s3_args['ServerSideEncryption'] = 'AES256'
+
         # Check if bucket exists
         if ctx.obj.s3_create_bucket:
             buckets = client_s3.list_buckets()
@@ -741,7 +747,13 @@ def backup(ctx, **kwargs):
             if badReturn:
                 s3path = '{}~incomplete'.format(s3path)
             try:
-                client_s3.upload_file(ctx.obj.dump_path, ctx.obj.s3_bucket, s3path)
+                client_s3.upload_file(
+                    Filename=ctx.obj.dump_path,
+                    Key=s3path,
+                    Bucket=ctx.obj.s3_bucket,
+                    ExtraArgs=s3_args
+                )
+
             except S3UploadFailedError as e:
                 logger.exception(e)
                 raise e
@@ -754,7 +766,12 @@ def backup(ctx, **kwargs):
                     filepath = os.path.join(path, f)
                     s3path = os.path.join(dumpdir, filepath[dumppathlen:])
                     try:
-                        client_s3.upload_file(filepath, ctx.obj.s3_bucket, s3path)
+                        client_s3.upload_file(
+                            Filename=filepath,
+                            Key=s3path,
+                            Bucket=ctx.obj.s3_bucket,
+                            ExtraArgs=s3_args
+                        )
                     except S3UploadFailedError as e:
                         logger.exception(e)
                         raise e
@@ -762,7 +779,13 @@ def backup(ctx, **kwargs):
         # Upload logfile
         logger.info('Uploading logfile to S3')
         try:
-            client_s3.upload_file(ctx.obj.logfile, ctx.obj.s3_bucket, s3logfname)
+            client_s3.upload_file(
+                Filename=ctx.obj.logfile,
+                Key=s3logfname,
+                Bucket=ctx.obj.s3_bucket,
+                ExtraArgs=s3_args
+            )
+
         except S3UploadFailedError as e:
             logger.exception(e)
             raise e

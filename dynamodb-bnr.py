@@ -58,25 +58,25 @@ const_parameters = Namespace({
     'schema_file': 'schema.json',
     'data_dir': 'data',
     'throughputexceeded_sleeptime':
-        os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_SLEEPTIME', 10),
+        int(os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_SLEEPTIME', 10)),
     'throughputexceeded_maxretry':
-        os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_MAXRETRY', 5),
+        int(os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_MAXRETRY', 5)),
     'resourceinuse_sleeptime':
-        os.getenv('DYNAMODB_BNR_RESOURCEINUSE_SLEEPTIME', 10),
+        int(os.getenv('DYNAMODB_BNR_RESOURCEINUSE_SLEEPTIME', 10)),
     'resourceinuse_maxretry':
-        os.getenv('DYNAMODB_BNR_RESOURCEINUSE_MAXRETRY', 5),
+        int(os.getenv('DYNAMODB_BNR_RESOURCEINUSE_MAXRETRY', 5)),
     'limitexceeded_sleeptime':
-        os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_SLEEPTIME', 15),
+        int(os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_SLEEPTIME', 15)),
     'limitexceeded_maxretry':
-        os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_MAXRETRY', 5),
+        int(os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_MAXRETRY', 5)),
     'tableoperation_sleeptime':
-        os.getenv('DYNAMODB_BNR_TABLEOPERATION_SLEEPTIME', 5),
+        int(os.getenv('DYNAMODB_BNR_TABLEOPERATION_SLEEPTIME', 5)),
     'dynamodb_max_batch_write':
-        os.getenv('DYNAMODB_BNR_MAX_BATCH_WRITE', 25),
+        int(os.getenv('DYNAMODB_BNR_MAX_BATCH_WRITE', 25)),
     'opensslerror_maxretry':
-        os.getenv('DYNAMODB_BNR_OPENSSLERROR_MAXRETRY', 5),
+        int(os.getenv('DYNAMODB_BNR_OPENSSLERROR_MAXRETRY', 5)),
     's3_max_delete_objects':
-        os.getenv('DYNAMODB_BNR_MAX_DELETE_OBJECTS', 1000),
+        int(os.getenv('DYNAMODB_BNR_MAX_DELETE_OBJECTS', 1000)),
 })
 _global_client_dynamodb = None
 _global_client_s3 = None

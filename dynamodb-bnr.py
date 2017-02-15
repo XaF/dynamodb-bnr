@@ -408,6 +408,9 @@ def s3_removefiles(objects):
     client_s3 = get_client_s3()
     objects = list(objects)
 
+    # Must add log files!
+    objects += ['{}.log'.format(obj) for obj in objects]
+
     while len(objects) > 0:
         logger.debug('Current number of objects to delete: '.format(len(objects)))
         objects = s3_delete_objects(client_s3, objects)

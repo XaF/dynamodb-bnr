@@ -204,7 +204,8 @@ class TarFileWriter(multiprocessing.Process):
               help='Define the AWS DynamoDB region')
 @click.option('--s3/--no-s3', default=False,
               help='Activate S3 mode')
-@click.option('--s3-sse', is_flag=True, default=False,
+@click.option('--s3-server-side-encryption', '--s3-sse',
+              is_flag=True, default=False,
               help='Use server side encryption (AES256)')
 @click.option('--s3-create-bucket/--no-s3-create-bucket', default=False,
               help='Create S3 bucket if it does not exist')

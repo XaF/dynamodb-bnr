@@ -207,6 +207,10 @@ class TarFileWriter(multiprocessing.Process):
 @click.option('--s3-server-side-encryption', '--s3-sse',
               is_flag=True, default=False,
               help='Use server side encryption (AES256)')
+@click.option('--s3-infrequent-access', '--s3-ia',
+              is_flag=True, default=False,
+              help='Store the objects in S3 as Infrequent Access '
+              '(WARNING: IA objects are billed for at least 30 days)')
 @click.option('--s3-create-bucket/--no-s3-create-bucket', default=False,
               help='Create S3 bucket if it does not exist')
 @click.option('--s3-profile',
@@ -727,6 +731,8 @@ def backup(ctx, **kwargs):
         s3_args = {}
         if ctx.obj.s3_sse:
             s3_args['ServerSideEncryption'] = 'AES256'
+        if ctx.obj.s3_ia:
+            s3_args['StorageClass'] = 'STANDARD_IA'
 
         # Check if bucket exists
         if ctx.obj.s3_create_bucket:

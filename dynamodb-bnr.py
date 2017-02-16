@@ -300,20 +300,32 @@ def cli(ctx, **kwargs):
                                 ctx.obj.ddb_profile is not None))
 
     # Check that s3 configuration is available if needed
-    if ctx.obj.s3 and \
-            (ctx.obj.s3_profile is None and
-             (ctx.obj.s3_accesskey is None or
-              ctx.obj.s3_region is None or
-              ctx.obj.s3_secretkey is None or
-              ctx.obj.s3_bucket is None)):
-        raise RuntimeError(('S3 configuration is incomplete '
-                            '(accessKey? {}, secretKey? {}, region? {}, '
-                            'bucket? {}) or profile {}').format(
-                                ctx.obj.s3_accesskey is not None,
-                                ctx.obj.s3_secretkey is not None,
-                                ctx.obj.s3_region is not None,
-                                ctx.obj.s3_bucket is not None,
-                                ctx.obj.s3_profile is not None))
+    if ctx.obj.s3:
+        if (ctx.obj.s3_profile is None and
+            (ctx.obj.s3_accesskey is None or
+             ctx.obj.s3_region is None or
+             ctx.obj.s3_secretkey is None or
+             ctx.obj.s3_bucket is None)):
+            raise RuntimeError(('S3 configuration is incomplete '
+                                '(accessKey? {}, secretKey? {}, region? {}, '
+                                'bucket? {}) or profile {}').format(
+                                    ctx.obj.s3_accesskey is not None,
+                                    ctx.obj.s3_secretkey is not None,
+                                    ctx.obj.s3_region is not None,
+                                    ctx.obj.s3_bucket is not None,
+                                    ctx.obj.s3_profile is not None))
+
+        if ctx.obj.s3_ia and \
+            ((ctx.obj.retention_days is None and
+             (ctx.obj.retention_weeks is not None or
+              ctx.obj.retention_months is not None)) or
+             (ctx.obj.retention_days is not None and
+              ctx.obj.retention_days < 30)):
+            logging.warning('You are using S3 Infrequent Access storage '
+                            'with a retention policy (days) of less than '
+                            '30 days. Be aware that Infrequent Access objects '
+                            'are billed for at least 30 days, even if they are '
+                            'deleted.')
 
     log_level = 'DEBUG' if ctx.obj.debug else ctx.obj.loglevel
     if ctx.obj.logfile is None:

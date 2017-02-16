@@ -23,10 +23,22 @@ import os
 import re
 import shutil
 from socket import error as SocketError
-import StringIO
 import sys
 import tarfile
 import time
+
+try:
+    from StringIO import StringIO as TarFileIO
+except ImportError:
+    from io import BytesIO
+
+    def TarFileIO(s):
+        return BytesIO(s.encode("utf-8"))
+
+try:
+    xrange
+except NameError:
+    xrange = range
 
 
 class Namespace(object):
@@ -534,9 +546,9 @@ def table_backup(table_name):
                            indent=const_parameters.json_indent)
         fpath = os.path.join(table_dump_path, const_parameters.schema_file)
         if parameters.tar_path is not None:
-            f = StringIO.StringIO(jdump)
+            f = TarFileIO(jdump)
             info = tarfile.TarInfo(name=fpath)
-            info.size = f.len
+            info.size = len(f.getvalue())
             info.mode = 0o644
             parameters.tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
         else:
@@ -562,9 +574,9 @@ def table_backup(table_name):
                 table_dump_path_data,
                 '{}.json'.format(str(more_items).zfill(10)))
             if parameters.tar_path is not None:
-                f = StringIO.StringIO(jdump)
+                f = TarFileIO(jdump)
                 info = tarfile.TarInfo(name=fpath)
-                info.size = f.len
+                info.size = len(f.getvalue())
                 info.mode = 0o644
                 parameters.tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
             else:
@@ -891,6 +903,14 @@ def table_batch_write(client, table_name, items):
     return items
 
 
+def load_json_from_stream(f):
+    content = f.read()
+    if type(content) != str:
+        content = content.decode('utf-8')
+
+    return json.loads(content)
+
+
 def table_restore(table_name):
     client_ddb = get_client_dynamodb()
 
@@ -902,7 +922,7 @@ def table_restore(table_name):
             member = tar.getmember(os.path.join(table_dump_path, const_parameters.schema_file))
             f = tar.extractfile(member)
 
-            table_schema = json.load(f)
+            table_schema = load_json_from_stream(f)
         except KeyError as e:
             raise RuntimeError('Schema of table \'{}\' not found'.format(table_name))
     else:
@@ -911,7 +931,7 @@ def table_restore(table_name):
             raise RuntimeError('Schema of table \'{}\' not found'.format(table_name))
 
         with open(os.path.join(table_dump_path, const_parameters.schema_file), 'r') as f:
-            table_schema = json.load(f)
+            table_schema = load_json_from_stream(f)
 
     if 'Table' in table_schema:
         table_schema = table_schema['Table']
@@ -956,10 +976,10 @@ def table_restore(table_name):
             member = tar.getmember(os.path.join(table_dump_path_data, data_file))
             f = tar.extractfile(member)
 
-            loaded_items = json.load(f)
+            loaded_items = load_json_from_stream(f)
         else:
             with open(os.path.join(table_dump_path_data, data_file), 'r') as f:
-                loaded_items = json.load(f)
+                loaded_items = load_json_from_stream(f)
 
         if 'Items' in loaded_items:
             loaded_items = loaded_items['Items']

@@ -12,7 +12,7 @@ A Dockerfile is provided to run `dynamodb-bnr` from a docker container. The `dyn
 ## Requirements
 
 `dynamodb-bnr` requirements are currently as follow:
-  - Python 2.7 (compatibility with Python 3 is expected at some point)
+  - Python 2.7 or 3.5
   - `boto3`
   - `pyopenssl`
 

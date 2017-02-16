@@ -13,6 +13,7 @@ from botocore.exceptions import ClientError
 from boto3.exceptions import S3UploadFailedError
 import click
 import datetime
+import errno
 import fnmatch
 import json
 import logging
@@ -21,6 +22,7 @@ import OpenSSL
 import os
 import re
 import shutil
+from socket import error as SocketError
 import StringIO
 import sys
 import tarfile
@@ -77,6 +79,10 @@ const_parameters = Namespace({
         int(os.getenv('DYNAMODB_BNR_OPENSSLERROR_MAXRETRY', 5)),
     's3_max_delete_objects':
         int(os.getenv('DYNAMODB_BNR_MAX_DELETE_OBJECTS', 1000)),
+    'connresetbypeer_sleeptime':
+        int(os.getenv('DYNAMODB_BNR_ECONNRESET_MAXRETRY', 15)),
+    'connresetbypeer_maxretry':
+        int(os.getenv('DYNAMODB_BNR_ECONNRESET_MAXRETRY', 5)),
 })
 _global_client_dynamodb = None
 _global_client_s3 = None
@@ -487,9 +493,21 @@ def get_dynamo_matching_table_names(table_name_wildcard):
 def manage_db_scan(client_ddb, **kwargs):
     items_list = None
     throughputexceeded_currentretry = 0
+    connresetbypeer_currentretry = 0
     while items_list is None:
         try:
             items_list = client_ddb.scan(**kwargs)
+        except SocketError as e:
+            if e.errno != errno.ECONNRESET or \
+                    connresetbypeer_currentretry >= const_parameters.connresetbypeer_maxretry:
+                raise e
+
+            connresetbypeer_currentretry += 1
+            sleeptime = const_parameters.connresetbypeer_sleeptime
+            sleeptime *= connresetbypeer_currentretry
+            logger.info(('Got \'Connection reset by peer\', '
+                         'waiting {} seconds before retry').format(sleeptime))
+            time.sleep(sleeptime)
         except ClientError as e:
             if e.response['Error']['Code'] != 'ProvisionedThroughputExceededException' or \
                     throughputexceeded_currentretry >= const_parameters.throughputexceeded_maxretry:

@@ -8,10 +8,10 @@
 # Raphaël Beamonte <raphael.beamonte@bhvr.com>
 #
 
+import argparse
 import boto3
 from botocore.exceptions import ClientError
 from boto3.exceptions import S3UploadFailedError
-import click
 import datetime
 import errno
 import fnmatch
@@ -96,8 +96,8 @@ def get_client_dynamodb():
         else:
             session = boto3.Session(
                 region_name=parameters.ddb_region,
-                aws_access_key_id=parameters.ddb_accesskey,
-                aws_secret_access_key=parameters.ddb_secretkey,
+                aws_access_key_id=parameters.ddb_access_key,
+                aws_secret_access_key=parameters.ddb_secret_key,
             )
         _global_client_dynamodb = session.client(
             service_name='dynamodb'
@@ -113,8 +113,8 @@ def get_client_s3():
         else:
             session = boto3.Session(
                 region_name=parameters.s3_region,
-                aws_access_key_id=parameters.s3_accesskey,
-                aws_secret_access_key=parameters.s3_secretkey,
+                aws_access_key_id=parameters.s3_access_key,
+                aws_secret_access_key=parameters.s3_secret_key,
             )
         _global_client_s3 = session.client(
             service_name='s3'
@@ -170,172 +170,66 @@ class TarFileWriter(multiprocessing.Process):
         tar.close()
 
 
-@click.group()
-@click.option('--debug/--no-debug', '-d', default=False,
-              help='Activate debug output')
-@click.option('--loglevel', default='INFO',
-              type=click.Choice([
-                'NOTSET', 'DEBUG', 'INFO',
-                'WARNING', 'ERROR', 'CRITICAL'
-              ]),
-              help='Define the specific log level')
-@click.option('--logfile', default=None)
-@click.option('--profile',
-              default=os.getenv('AWS_DEFAULT_PROFILE', None),
-              help='Define the AWS profile name (defaults to the environment '
-                   'variable AWS_DEFAULT_PROFILE)')
-@click.option('--accessKey',
-              default=os.getenv('AWS_ACCESS_KEY_ID', None),
-              help='Define the AWS default access key (defaults to the '
-                   'environment variable AWS_ACCESS_KEY_ID)')
-@click.option('--secretKey',
-              default=os.getenv('AWS_SECRET_ACCESS_KEY', None),
-              help='Define the AWS default secret key (defaults to the '
-                   'environment variable AWS_SECRET_ACCESS_KEY)')
-@click.option('--region',
-              default=os.getenv('REGION', None),
-              help='Define the AWS default region (defaults to the environment '
-                   'variable REGION)')
-@click.option('--ddb-profile',
-              default=os.getenv('DDB_AWS_DEFAULT_PROFILE', None),
-              help='Define the AWS DynamoDB profile name')
-@click.option('--ddb-accessKey',
-              default=os.getenv('DDB_AWS_ACCESS_KEY_ID', None),
-              help='Define the AWS DynamoDB access key')
-@click.option('--ddb-secretKey',
-              default=os.getenv('DDB_AWS_SECRET_ACCESS_KEY', None),
-              help='Define the AWS DynamoDB secret key')
-@click.option('--ddb-region',
-              default=os.getenv('DDB_REGION', None),
-              help='Define the AWS DynamoDB region')
-@click.option('--s3/--no-s3', default=False,
-              help='Activate S3 mode')
-@click.option('--s3-server-side-encryption', '--s3-sse',
-              is_flag=True, default=False,
-              help='Use server side encryption (AES256)')
-@click.option('--s3-infrequent-access', '--s3-ia',
-              is_flag=True, default=False,
-              help='Store the objects in S3 as Infrequent Access '
-              '(WARNING: IA objects are billed for at least 30 days)')
-@click.option('--s3-create-bucket/--no-s3-create-bucket', default=False,
-              help='Create S3 bucket if it does not exist')
-@click.option('--s3-profile',
-              default=os.getenv('S3_AWS_DEFAULT_PROFILE', None),
-              help='Define the AWS S3 profile name')
-@click.option('--s3-accessKey',
-              default=os.getenv('S3_AWS_ACCESS_KEY_ID', None),
-              help='Define the AWS S3 access key')
-@click.option('--s3-secretKey',
-              default=os.getenv('S3_AWS_SECRET_ACCESS_KEY', None),
-              help='Define the AWS S3 secret key')
-@click.option('--s3-region',
-              default=os.getenv('S3_REGION', None),
-              help='Define the AWS S3 region')
-@click.option('--s3-bucket',
-              default=os.getenv('S3_BUCKET', None),
-              help='Define the AWS S3 bucket')
-@click.option('--table',
-              default='*',
-              help='The table to backup or restore (\'*\' means all tables, '
-                   '\'t*\' means all tables starting with \'t\')')
-@click.option('--dump-path',
-              default=None,
-              help='The path to the dump directory; if specified, neither '
-                   '--dump-dir nor --dump-format will be used.')
-@click.option('--dump-dir',
-              default=os.getcwd(),
-              help='The path to the dump directory, in which the dump '
-                   'file/directory will be created, depending on the '
-                   '--dump-format')
-@click.option('--dump-format',
-              default='dynamodb-dump-%Y%m%d%H%M%S.tgz',
-              help='The format of the file (if tar extension provided) or '
-                   'directory used for the dump')
-@click.option('--retention-days', default=None, type=int,
-              help='The retention policy for the backups, in the form of '
-                   '\'keep all backups for X days\'')
-@click.option('--retention-weeks', default=None, type=int,
-              help='The retention policy for the backups, in the form of '
-                   '\'keep weekly backups for X weeks\'')
-@click.option('--retention-months', default=None, type=int,
-              help='The retention policy for the backups, in the form of '
-                   '\'keep monthly backups for X months\'')
-@click.pass_context
-def cli(ctx, **kwargs):
-    ctx.obj.update(kwargs)
-
+def cli():
     # Set up amazon configuration
-    if ctx.obj.accesskey is not None:
-        if ctx.obj.ddb_accesskey is None:
-            ctx.obj.ddb_accesskey = ctx.obj.accesskey
-        if ctx.obj.s3_accesskey is None:
-            ctx.obj.s3_accesskey = ctx.obj.accesskey
-    if ctx.obj.secretkey is not None:
-        if ctx.obj.ddb_secretkey is None:
-            ctx.obj.ddb_secretkey = ctx.obj.secretkey
-        if ctx.obj.s3_secretkey is None:
-            ctx.obj.s3_secretkey = ctx.obj.secretkey
-    if ctx.obj.region is not None:
-        if ctx.obj.ddb_region is None:
-            ctx.obj.ddb_region = ctx.obj.region
-        if ctx.obj.s3_region is None:
-            ctx.obj.s3_region = ctx.obj.region
-    if ctx.obj.profile is not None:
-        if ctx.obj.ddb_profile is None:
-            ctx.obj.ddb_profile = ctx.obj.profile
-        if ctx.obj.s3_profile is None:
-            ctx.obj.s3_profile = ctx.obj.profile
+    if parameters.access_key is not None:
+        if parameters.ddb_access_key is None:
+            parameters.ddb_access_key = parameters.access_key
+        if parameters.s3_access_key is None:
+            parameters.s3_access_key = parameters.access_key
+    if parameters.secret_key is not None:
+        if parameters.ddb_secret_key is None:
+            parameters.ddb_secret_key = parameters.secret_key
+        if parameters.s3_secret_key is None:
+            parameters.s3_secret_key = parameters.secret_key
+    if parameters.region is not None:
+        if parameters.ddb_region is None:
+            parameters.ddb_region = parameters.region
+        if parameters.s3_region is None:
+            parameters.s3_region = parameters.region
+    if parameters.profile is not None:
+        if parameters.ddb_profile is None:
+            parameters.ddb_profile = parameters.profile
+        if parameters.s3_profile is None:
+            parameters.s3_profile = parameters.profile
 
     # Check that dynamodb configuration is available
-    if ctx.obj.ddb_profile is None and \
-            (ctx.obj.ddb_accesskey is None or
-             ctx.obj.ddb_secretkey is None or
-             ctx.obj.ddb_region is None):
+    if parameters.ddb_profile is None and \
+            (parameters.ddb_access_key is None or
+             parameters.ddb_secret_key is None or
+             parameters.ddb_region is None):
         raise RuntimeError(('DynamoDB configuration is incomplete '
-                            '(accessKey? {}, secretKey? {}, region? {}'
+                            '(access key? {}, secret key? {}, region? {}'
                             ') or profile? {})').format(
-                                ctx.obj.ddb_accesskey is not None,
-                                ctx.obj.ddb_secretkey is not None,
-                                ctx.obj.ddb_region is not None,
-                                ctx.obj.ddb_profile is not None))
+                                parameters.ddb_access_key is not None,
+                                parameters.ddb_secret_key is not None,
+                                parameters.ddb_region is not None,
+                                parameters.ddb_profile is not None))
 
     # Check that s3 configuration is available if needed
-    if ctx.obj.s3:
-        if (ctx.obj.s3_profile is None and
-            (ctx.obj.s3_accesskey is None or
-             ctx.obj.s3_region is None or
-             ctx.obj.s3_secretkey is None or
-             ctx.obj.s3_bucket is None)):
-            raise RuntimeError(('S3 configuration is incomplete '
-                                '(accessKey? {}, secretKey? {}, region? {}, '
-                                'bucket? {}) or profile {}').format(
-                                    ctx.obj.s3_accesskey is not None,
-                                    ctx.obj.s3_secretkey is not None,
-                                    ctx.obj.s3_region is not None,
-                                    ctx.obj.s3_bucket is not None,
-                                    ctx.obj.s3_profile is not None))
+    if parameters.s3 and \
+        (parameters.s3_profile is None and
+         (parameters.s3_access_key is None or
+          parameters.s3_region is None or
+          parameters.s3_secret_key is None or
+          parameters.s3_bucket is None)):
+        raise RuntimeError(('S3 configuration is incomplete '
+                            '(access key? {}, secret key? {}, region? {}, '
+                            'bucket? {}) or profile {}').format(
+                                parameters.s3_access_key is not None,
+                                parameters.s3_secret_key is not None,
+                                parameters.s3_region is not None,
+                                parameters.s3_bucket is not None,
+                                parameters.s3_profile is not None))
 
-        if ctx.obj.s3_ia and \
-            ((ctx.obj.retention_days is None and
-             (ctx.obj.retention_weeks is not None or
-              ctx.obj.retention_months is not None)) or
-             (ctx.obj.retention_days is not None and
-              ctx.obj.retention_days < 30)):
-            logging.warning('You are using S3 Infrequent Access storage '
-                            'with a retention policy (days) of less than '
-                            '30 days. Be aware that Infrequent Access objects '
-                            'are billed for at least 30 days, even if they are '
-                            'deleted.')
-
-    log_level = 'DEBUG' if ctx.obj.debug else ctx.obj.loglevel
-    if ctx.obj.logfile is None:
+    if parameters.logfile is None:
         fname = os.path.basename(__file__)
         fsplit = os.path.splitext(fname)
         if fsplit[1] == '.py':
             fname = fsplit[0]
-        ctx.obj.logfile = os.path.join(os.getcwd(), '{}.log'.format(fname))
+        parameters.logfile = os.path.join(os.getcwd(), '{}.log'.format(fname))
 
-    fh = logging.FileHandler(ctx.obj.logfile)
+    fh = logging.FileHandler(parameters.logfile)
     ch = logging.StreamHandler()
 
     formatter = logging.Formatter('%(asctime)s::%(name)s::%(processName)s'
@@ -343,7 +237,7 @@ def cli(ctx, **kwargs):
     fh.setFormatter(formatter)
     ch.setFormatter(formatter)
 
-    log_level_value = getattr(logging, log_level)
+    log_level_value = getattr(logging, parameters.loglevel)
     logger.setLevel(log_level_value)
     fh.setLevel(log_level_value)
     ch.setLevel(log_level_value)
@@ -351,7 +245,25 @@ def cli(ctx, **kwargs):
     logger.addHandler(fh)
     logger.addHandler(ch)
 
-    logger.info('Loglevel set to {}'.format(log_level))
+    logger.info('Loglevel set to {}'.format(parameters.loglevel))
+
+    if parameters.s3_infrequent_access and \
+        ((parameters.retention_days is None and
+         (parameters.retention_weeks is not None or
+          parameters.retention_months is not None)) or
+         (parameters.retention_days is not None and
+          parameters.retention_days < 30)):
+        logger.warning('You are using S3 Infrequent Access storage '
+                       'with a retention policy (days) of less than '
+                       '30 days. Be aware that Infrequent Access objects '
+                       'are billed for at least 30 days, even if they are '
+                       'deleted.')
+
+    for source in (locals(), globals()):
+        if parameters.command in source:
+            source[parameters.command]()
+            return
+    raise RuntimeError('Command {} not found'.format(parameters.command))
 
 
 def days_difference(d1, d2):
@@ -571,14 +483,17 @@ def table_backup(table_name):
     # Make the data directory if it does not exist
     table_dump_path_data = os.path.join(table_dump_path, const_parameters.data_dir)
     if not parameters.tar_path:
-        if parameters.only is None and os.path.isdir(table_dump_path):
+        if parameters.backup_only is None and \
+                os.path.isdir(table_dump_path):
             shutil.rmtree(table_dump_path)
 
-        if parameters.only == 'data' and os.path.isdir(table_dump_path_data):
+        if parameters.backup_only == 'data' and \
+                os.path.isdir(table_dump_path_data):
             shutil.rmtree(table_dump_path_data)
 
         if not os.path.isdir(table_dump_path_data) and \
-                (parameters.only is None or parameters.only == 'data'):
+                (parameters.backup_only is None or
+                 parameters.backup_only == 'data'):
             os.makedirs(table_dump_path_data)
         elif not os.path.isdir(table_dump_path):
             os.makedirs(table_dump_path)
@@ -594,7 +509,8 @@ def table_backup(table_name):
         parameters.tarwrite_queue.put({'tarinfo': info})
 
     # get table schema
-    if parameters.only is None or parameters.only == 'schema':
+    if parameters.backup_only is None or \
+            parameters.backup_only == 'schema':
         logger.info(('Backing up table schema '
                      'for table \'{}\'').format(table_name))
 
@@ -628,7 +544,8 @@ def table_backup(table_name):
                 f.write(jdump)
 
     # get table items
-    if parameters.only is None or parameters.only == 'data':
+    if parameters.backup_only is None or \
+            parameters.backup_only == 'data':
         more_items = 1
 
         logger.info("Backing up items for table \'{}\'".format(table_name))
@@ -700,9 +617,9 @@ def upload_to_s3(incomplete=False):
         client_s3 = get_client_s3()
 
         s3_args = {}
-        if parameters.s3_sse:
+        if parameters.s3_server_side_encryption:
             s3_args['ServerSideEncryption'] = 'AES256'
-        if parameters.s3_ia:
+        if parameters.s3_infrequent_access:
             s3_args['StorageClass'] = 'STANDARD_IA'
 
         # Check if bucket exists
@@ -768,55 +685,50 @@ def upload_to_s3(incomplete=False):
             raise e
 
 
-@cli.command()
-@click.option('--only', default=None, type=click.Choice(['data', 'schema']),
-              help='To backup only the data or schema')
-@click.pass_context
-def backup(ctx, **kwargs):
-    ctx.obj.update(kwargs)
-    if ctx.obj.dump_path is None:
-        if ctx.obj.s3:
+def backup():
+    if parameters.dump_path is None:
+        if parameters.s3:
             listdir, removefiles = s3_listdir, s3_removefiles
         else:
             listdir, removefiles = local_listdir, local_removefiles
-        apply_retention_policy(ctx.obj.retention_days,
-                               ctx.obj.retention_weeks,
-                               ctx.obj.retention_months,
+        apply_retention_policy(parameters.retention_days,
+                               parameters.retention_weeks,
+                               parameters.retention_months,
                                listdir,
                                removefiles)
 
-        ctx.obj.dump_path = os.path.join(
-            ctx.obj.dump_dir,
-            time.strftime(ctx.obj.dump_format))
+        parameters.dump_path = os.path.join(
+            parameters.dump_dir,
+            time.strftime(parameters.dump_format))
 
-    if tar_type(ctx.obj.dump_path) is not None:
-        ctx.obj.tar_path = 'dump'
-        ctx.obj.tarwrite_queue = multiprocessing.JoinableQueue()
-        tarwrite_process = TarFileWriter(ctx.obj.dump_path, ctx.obj.tarwrite_queue)
+    if tar_type(parameters.dump_path) is not None:
+        parameters.tar_path = 'dump'
+        parameters.tarwrite_queue = multiprocessing.JoinableQueue()
+        tarwrite_process = TarFileWriter(parameters.dump_path, parameters.tarwrite_queue)
         tarwrite_process.start()
 
-        info = tarfile.TarInfo(ctx.obj.tar_path)
+        info = tarfile.TarInfo(parameters.tar_path)
         info.type = tarfile.DIRTYPE
         info.mode = 0o755
-        ctx.obj.tarwrite_queue.put({'tarinfo': info})
+        parameters.tarwrite_queue.put({'tarinfo': info})
 
-    tables_to_backup = get_dynamo_matching_table_names(ctx.obj.table)
+    tables_to_backup = get_dynamo_matching_table_names(parameters.table)
     if not tables_to_backup:
-        logger.error('no tables found for \'{}\''.format(ctx.obj.table))
+        logger.error('no tables found for \'{}\''.format(parameters.table))
         sys.exit(1)
 
     logger.info('The following tables will be backed up: {}'.format(
         ', '.join(tables_to_backup)))
-    logger.info('Tables will be backed up in \'{}\''.format(ctx.obj.dump_path))
+    logger.info('Tables will be backed up in \'{}\''.format(parameters.dump_path))
 
     badReturn = parallel_workers(
         name='BackupProcess({})',
         target=table_backup,
         tables=tables_to_backup)
 
-    if ctx.obj.tar_path is not None:
-        ctx.obj.tarwrite_queue.put(None)
-        ctx.obj.tarwrite_queue.join()
+    if parameters.tar_path is not None:
+        parameters.tarwrite_queue.put(None)
+        parameters.tarwrite_queue.join()
 
     if badReturn:
         nErrors = len(badReturn)
@@ -1059,45 +971,39 @@ def table_restore(table_name):
             items = table_batch_write(client_ddb, table_name, items)
 
 
-@cli.command()
-@click.option('--restore-last', is_flag=True, default=False,
-              help='Restore the last available backup according to the dump format')
-@click.pass_context
-def restore(ctx, **kwargs):
-    ctx.obj.update(kwargs)
-
-    if ctx.obj.dump_path is None and ctx.obj.restore_last:
-        matching_fname = re.sub('(%.)+', '*', ctx.obj.dump_format.replace('*', '\\*'))
-        if os.path.isdir(ctx.obj.dump_dir):
+def restore():
+    if parameters.dump_path is None and parameters.restore_last:
+        matching_fname = re.sub('(%.)+', '*', parameters.dump_format.replace('*', '\\*'))
+        if os.path.isdir(parameters.dump_dir):
             most_recent = None
-            for f in os.listdir(ctx.obj.dump_dir):
-                fpath = os.path.join(ctx.obj.dump_dir, f)
+            for f in os.listdir(parameters.dump_dir):
+                fpath = os.path.join(parameters.dump_dir, f)
                 if fnmatch.fnmatch(f, matching_fname) and is_dumppath(fpath):
-                    t = time.strptime(f, ctx.obj.dump_format)
+                    t = time.strptime(f, parameters.dump_format)
                     if most_recent is None or t > most_recent[1]:
                         most_recent = (fpath, t)
             if most_recent is None:
                 raise RuntimeError(('No dump found in directory \'{}\' '
                                     'for format \'{}\'').format(
-                                   ctx.obj.dump_dir,
-                                   ctx.obj.dump_format))
+                                   parameters.dump_dir,
+                                   parameters.dump_format))
 
-            ctx.obj.dump_path = most_recent[0]
+            parameters.dump_path = most_recent[0]
 
-    if ctx.obj.dump_path is None or not os.path.exists(ctx.obj.dump_path):
+    if parameters.dump_path is None or not os.path.exists(parameters.dump_path):
         raise RuntimeError('No dump specified to restore; please use --dump-path')
 
     # Check dump path validity
-    if not is_dumppath(ctx.obj.dump_path):
+    if not is_dumppath(parameters.dump_path):
         raise RuntimeError(('Path \'{}\' is neither a directory '
-                            'nor a tar archive').format(ctx.obj.dump_path))
+                            'nor a tar archive').format(parameters.dump_path))
 
     logger.info('Looking for tables to restore in \'{}\''.format(
-        ctx.obj.dump_path))
+        parameters.dump_path))
 
-    tables_to_restore = get_dump_matching_table_names(ctx.obj.table)
+    tables_to_restore = get_dump_matching_table_names(parameters.table)
     if not tables_to_restore:
-        logger.error('no tables found for \'{}\''.format(ctx.obj.table))
+        logger.error('no tables found for \'{}\''.format(parameters.table))
         sys.exit(1)
 
     logger.info('The following tables will be restored: {}'.format(
@@ -1119,7 +1025,174 @@ def restore(ctx, **kwargs):
 
 
 if __name__ == '__main__':
-    logger = logging.getLogger(os.path.basename(__file__))
-    parameters = Namespace({'tar_path': None})
+    parser = argparse.ArgumentParser(
+        description='DynamoDB backup\'n\'restore python script '
+                    'with tarfile management')
 
-    cli(obj=parameters)
+    # Available commands
+    parser.add_argument(
+        'command',
+        choices=('backup', 'restore'),
+        help='The command to run')
+
+    # Logging options
+    parser.add_argument(
+        '-d', '--debug',
+        dest='loglevel',
+        action='store_const', const='DEBUG',
+        help='Activate debug output')
+    parser.add_argument(
+        '--loglevel',
+        dest='loglevel',
+        default='INFO',
+        choices=('NOTSET', 'DEBUG', 'INFO',
+                 'WARNING', 'ERROR', 'CRITICAL'),
+        help='Define the specific log level')
+    parser.add_argument(
+        '--logfile',
+        default=None,
+        help='The path to the logfile')
+
+    # AWS general options
+    parser.add_argument(
+        '--profile',
+        default=os.getenv('AWS_DEFAULT_PROFILE', None),
+        help='Define the AWS profile name (defaults to the environment '
+             'variable AWS_DEFAULT_PROFILE)')
+    parser.add_argument(
+        '--access-key', '--accessKey',
+        default=os.getenv('AWS_ACCESS_KEY_ID', None),
+        help='Define the AWS default access key (defaults to the '
+             'environment variable AWS_ACCESS_KEY_ID)')
+    parser.add_argument(
+        '--secret-key', '--secretKey',
+        default=os.getenv('AWS_SECRET_ACCESS_KEY', None),
+        help='Define the AWS default secret key (defaults to the '
+             'environment variable AWS_SECRET_ACCESS_KEY)')
+    parser.add_argument(
+        '--region',
+        default=os.getenv('REGION', None),
+        help='Define the AWS default region (defaults to the environment '
+             'variable REGION)')
+
+    # AWS DynamoDB specific options
+    parser.add_argument(
+        '--ddb-profile',
+        default=os.getenv('DDB_AWS_DEFAULT_PROFILE', None),
+        help='Define the AWS DynamoDB profile name')
+    parser.add_argument(
+        '--ddb-access-key', '--ddb-accessKey',
+        default=os.getenv('DDB_AWS_ACCESS_KEY_ID', None),
+        help='Define the AWS DynamoDB access key')
+    parser.add_argument(
+        '--ddb-secret-key', '--ddb-secretKey',
+        default=os.getenv('DDB_AWS_SECRET_ACCESS_KEY', None),
+        help='Define the AWS DynamoDB secret key')
+    parser.add_argument(
+        '--ddb-region',
+        default=os.getenv('DDB_REGION', None),
+        help='Define the AWS DynamoDB region')
+
+    # AWS S3 specific options
+    parser.add_argument(
+        '--s3',
+        action='store_true',
+        help='Activate S3 mode')
+    parser.add_argument(
+        '--s3-server-side-encryption', '--s3-sse',
+        action='store_true',
+        help='Use server side encryption (AES256)')
+    parser.add_argument(
+        '--s3-infrequent-access', '--s3-ia',
+        action='store_true',
+        help='Store the objects in S3 as Infrequent Access '
+             '(WARNING: IA objects are billed for at least 30 days)')
+    parser.add_argument(
+        '--s3-create-bucket',
+        action='store_true',
+        help='Create S3 bucket if it does not exist')
+    parser.add_argument(
+        '--s3-profile',
+        default=os.getenv('S3_AWS_DEFAULT_PROFILE', None),
+        help='Define the AWS S3 profile name')
+    parser.add_argument(
+        '--s3-access-key', '--s3-accessKey',
+        default=os.getenv('S3_AWS_ACCESS_KEY_ID', None),
+        help='Define the AWS S3 access key')
+    parser.add_argument(
+        '--s3-secret-key', '--s3-secretKey',
+        default=os.getenv('S3_AWS_SECRET_ACCESS_KEY', None),
+        help='Define the AWS S3 secret key')
+    parser.add_argument(
+        '--s3-region',
+        default=os.getenv('S3_REGION', None),
+        help='Define the AWS S3 region')
+    parser.add_argument(
+        '--s3-bucket',
+        default=os.getenv('S3_BUCKET', None),
+        help='Define the AWS S3 bucket')
+
+    # Backup and restore common options
+    parser.add_argument(
+        '--table',
+        default='*',
+        help='The table to backup or restore (\'*\' means all tables, '
+             '\'t*\' means all tables starting with \'t\')')
+
+    # Dump path options
+    parser.add_argument(
+        '--dump-path',
+        default=None,
+        help='The path to the dump directory; if specified, neither '
+             '--dump-dir nor --dump-format will be used')
+    parser.add_argument(
+        '--dump-dir',
+        default=os.getcwd(),
+        help='The path to the dump directory, in which the dump '
+             'file/directory will be created, depending on the '
+             '--dump-format')
+    parser.add_argument(
+        '--dump-format',
+        default='dynamodb-dump-%Y%m%d%H%M%S.tgz',
+        help='The format of the file (if tar extension provided) or '
+             'directory used for the dump')
+
+    # Backup specific options
+    parser.add_argument(
+        '--backup-only', '--only',
+        default=None,
+        choices=('data', 'schema'),
+        help='To backup only the data or schema')
+    parser.add_argument(
+        '--retention-days',
+        default=None,
+        type=int,
+        help='The retention policy for the backups, in the form of '
+             '\'keep all backups for X days\'')
+    parser.add_argument(
+        '--retention-weeks',
+        default=None,
+        type=int,
+        help='The retention policy for the backups, in the form of '
+             '\'keep weekly backups for X weeks\'')
+    parser.add_argument(
+        '--retention-months',
+        default=None,
+        type=int,
+        help='The retention policy for the backups, in the form of '
+             '\'keep monthly backups for X months\'')
+
+    # Restore specific options
+    parser.add_argument(
+        '--restore-last',
+        action='store_true',
+        help='Restore the last available backup according to '
+             'the dump format')
+
+    # Parsing
+    parameters = parser.parse_args()
+    parameters.tar_path = None
+
+    logger = logging.getLogger(os.path.basename(__file__))
+
+    cli()

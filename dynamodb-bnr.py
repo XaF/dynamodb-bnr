@@ -663,6 +663,81 @@ def parallel_workers(name, target, tables):
     return badReturn
 
 
+def upload_to_s3(incomplete=False):
+    # Upload to s3 if requested
+    if parameters.s3:
+        logger.info('Uploading files to S3')
+        client_s3 = get_client_s3()
+
+        s3_args = {}
+        if parameters.s3_sse:
+            s3_args['ServerSideEncryption'] = 'AES256'
+        if parameters.s3_ia:
+            s3_args['StorageClass'] = 'STANDARD_IA'
+
+        # Check if bucket exists
+        if parameters.s3_create_bucket:
+            buckets = client_s3.list_buckets()
+            exists = False
+            if 'Buckets' in buckets:
+                for bucket in buckets['Buckets']:
+                    if bucket['Name'] == parameters.s3_bucket:
+                        exists = True
+                        break
+
+            if not exists:
+                logger.info('Creating bucket {} in S3'.format(parameters.s3_bucket))
+                client_s3.create_bucket(Bucket=parameters.s3_bucket, ACL='private')
+
+        # Upload content
+        if parameters.tar_path is not None:
+            s3path = os.path.basename(parameters.dump_path)
+            if incomplete:
+                s3path = '{}~incomplete'.format(s3path)
+            try:
+                client_s3.upload_file(
+                    Filename=parameters.dump_path,
+                    Key=s3path,
+                    Bucket=parameters.s3_bucket,
+                    ExtraArgs=s3_args
+                )
+
+            except S3UploadFailedError as e:
+                logger.exception(e)
+                raise e
+            s3logfname = '{}.log'.format(s3path)
+        else:
+            dumpdir = os.path.basename(parameters.dump_path)
+            dumppathlen = len(parameters.dump_path) + 1
+            for path, dirs, files in os.walk(parameters.dump_path):
+                for f in files:
+                    filepath = os.path.join(path, f)
+                    s3path = os.path.join(dumpdir, filepath[dumppathlen:])
+                    try:
+                        client_s3.upload_file(
+                            Filename=filepath,
+                            Key=s3path,
+                            Bucket=parameters.s3_bucket,
+                            ExtraArgs=s3_args
+                        )
+                    except S3UploadFailedError as e:
+                        logger.exception(e)
+                        raise e
+            s3logfname = '{}.log'.format(dumpdir)
+        # Upload logfile
+        logger.info('Uploading logfile to S3')
+        try:
+            client_s3.upload_file(
+                Filename=parameters.logfile,
+                Key=s3logfname,
+                Bucket=parameters.s3_bucket,
+                ExtraArgs=s3_args
+            )
+        except S3UploadFailedError as e:
+            logger.exception(e)
+            raise e
+
+
 @cli.command()
 @click.option('--only', default=None, type=click.Choice(['data', 'schema']),
               help='To backup only the data or schema')
@@ -716,86 +791,14 @@ def backup(ctx, **kwargs):
     if badReturn:
         nErrors = len(badReturn)
         logger.info('Backup ended with {} error(s)'.format(nErrors))
+        upload_to_s3(incomplete=True)
         raise RuntimeError(('{} error(s) during backup '
                             'for processes: {}').format(
                            nErrors,
                            ', '.join([x.name for x in badReturn])))
     else:
         logger.info('Backup ended without error')
-
-    # Upload to s3 if requested
-    if ctx.obj.s3:
-        logger.info('Uploading files to S3')
-        client_s3 = get_client_s3()
-
-        s3_args = {}
-        if ctx.obj.s3_sse:
-            s3_args['ServerSideEncryption'] = 'AES256'
-        if ctx.obj.s3_ia:
-            s3_args['StorageClass'] = 'STANDARD_IA'
-
-        # Check if bucket exists
-        if ctx.obj.s3_create_bucket:
-            buckets = client_s3.list_buckets()
-            exists = False
-            if 'Buckets' in buckets:
-                for bucket in buckets['Buckets']:
-                    if bucket['Name'] == ctx.obj.s3_bucket:
-                        exists = True
-                        break
-
-            if not exists:
-                logger.info('Creating bucket {} in S3'.format(ctx.obj.s3_bucket))
-                client_s3.create_bucket(Bucket=ctx.obj.s3_bucket, ACL='private')
-
-        # Upload content
-        if ctx.obj.tar_path is not None:
-            s3path = os.path.basename(ctx.obj.dump_path)
-            if badReturn:
-                s3path = '{}~incomplete'.format(s3path)
-            try:
-                client_s3.upload_file(
-                    Filename=ctx.obj.dump_path,
-                    Key=s3path,
-                    Bucket=ctx.obj.s3_bucket,
-                    ExtraArgs=s3_args
-                )
-
-            except S3UploadFailedError as e:
-                logger.exception(e)
-                raise e
-            s3logfname = '{}.log'.format(s3path)
-        else:
-            dumpdir = os.path.basename(ctx.obj.dump_path)
-            dumppathlen = len(ctx.obj.dump_path) + 1
-            for path, dirs, files in os.walk(ctx.obj.dump_path):
-                for f in files:
-                    filepath = os.path.join(path, f)
-                    s3path = os.path.join(dumpdir, filepath[dumppathlen:])
-                    try:
-                        client_s3.upload_file(
-                            Filename=filepath,
-                            Key=s3path,
-                            Bucket=ctx.obj.s3_bucket,
-                            ExtraArgs=s3_args
-                        )
-                    except S3UploadFailedError as e:
-                        logger.exception(e)
-                        raise e
-            s3logfname = '{}.log'.format(dumpdir)
-        # Upload logfile
-        logger.info('Uploading logfile to S3')
-        try:
-            client_s3.upload_file(
-                Filename=ctx.obj.logfile,
-                Key=s3logfname,
-                Bucket=ctx.obj.s3_bucket,
-                ExtraArgs=s3_args
-            )
-
-        except S3UploadFailedError as e:
-            logger.exception(e)
-            raise e
+        upload_to_s3(incomplete=False)
 
 
 def get_dump_matching_table_names(table_name_wildcard):

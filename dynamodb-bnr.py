@@ -1043,7 +1043,7 @@ def restore():
         logger.info('Restoration ended without error')
 
 
-if __name__ == '__main__':
+def parse_args():
     parser = argparse.ArgumentParser(
         description='DynamoDB backup\'n\'restore python script '
                     'with tarfile management')
@@ -1210,7 +1210,11 @@ if __name__ == '__main__':
              'the dump format')
 
     # Parsing
-    parameters = parser.parse_args()
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    parameters = parse_args()
     parameters.tar_path = None
 
     logger = logging.getLogger(os.path.basename(__file__))

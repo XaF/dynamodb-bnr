@@ -15,16 +15,20 @@ from boto3.exceptions import S3UploadFailedError
 import datetime
 import errno
 import fnmatch
+import glob
+import itertools
 import json
 import logging
 import multiprocessing
 import OpenSSL
 import os
 import re
+import readline
 import shutil
 from socket import error as SocketError
 import sys
 import tarfile
+import tempfile
 import time
 
 try:
@@ -39,6 +43,11 @@ try:
     xrange
 except NameError:
     xrange = range
+
+try:
+    raw_input
+except NameError:
+    raw_input = input
 
 
 class Namespace(object):
@@ -303,13 +312,16 @@ def local_listdir():
             yield fname
 
 
-def s3_listdir():
+def s3_listdir(prefix=None):
     client_s3 = get_client_s3()
     more_objects = True
 
+    if prefix is None:
+        prefix = parameters.dump_format.split('%')[0]
+
     objects_list = client_s3.list_objects_v2(
         Bucket=parameters.s3_bucket,
-        Prefix=parameters.dump_format.split('%')[0],
+        Prefix=prefix,
     )
     while more_objects and objects_list['KeyCount'] > 0:
         for object_info in objects_list['Contents']:
@@ -771,6 +783,44 @@ def upload_to_s3(incomplete=False):
             raise e
 
 
+def download_from_s3(s3path, path=tempfile.gettempdir()):
+    logger.info('Downloading object \'{}\' from S3'.format(s3path))
+    client_s3 = get_client_s3()
+
+    # Create the directory in which we will download the file(s), if needed
+    path_to_use = os.path.dirname(os.path.join(path, s3path))
+    if not os.path.exists(path_to_use):
+        os.makedirs(path_to_use)
+
+    try:
+        # Try downloading the file itself
+        filepath = os.path.join(path, s3path)
+        client_s3.download_file(
+            Bucket=parameters.s3_bucket,
+            Key=s3path,
+            Filename=filepath
+        )
+        return filepath
+    except ClientError as e:
+        if e.response['Error']['Code'] != '404':
+            raise
+
+        # If not found, must be a directory: try to download the whole hierarchy
+        for filename in s3_listdir('{}{}'.format(s3path, os.path.sep)):
+            dirpath = os.path.join(path, os.path.dirname(filename))
+            if not os.path.exists(dirpath):
+                os.makedirs(dirpath)
+
+            filepath = os.path.join(path, filename)
+            client_s3.download_file(
+                Bucket=parameters.s3_bucket,
+                Key=filename,
+                Filename=filepath
+            )
+
+        return os.path.join(path, s3path)
+
+
 def backup():
     if parameters.dump_path is None:
         if parameters.s3:
@@ -1068,26 +1118,115 @@ def table_restore(table_name):
             items = table_batch_write(client_ddb, table_name, items)
 
 
+def get_last_backup(listdir):
+    most_recent = None
+    matching_fname = re.sub('(%.)+', '*', parameters.dump_format.replace('*', '\\*'))
+    for filename in listdir():
+        if fnmatch.fnmatch(filename, matching_fname):
+            t = time.strptime(filename, parameters.dump_format)
+            if most_recent is None or t > most_recent[1]:
+                most_recent = (filename, t)
+
+    if most_recent is not None:
+        most_recent = most_recent[0]
+
+    return most_recent
+
+
+def local_interactive_complete(text, state):
+    return (glob.glob(text + '*') + [None])[state]
+
+
+def s3_interactive_complete(text, state):
+    try:
+        return next(itertools.islice(s3_listdir(text), state, None))
+    except StopIteration as e:
+        return None
+
+
+def get_backup_interactive(listdir):
+    most_recent = None
+    matching_fname = re.sub('(%.)+', '*', parameters.dump_format.replace('*', '\\*'))
+    for filename in listdir():
+        if fnmatch.fnmatch(filename, matching_fname):
+            t = time.strptime(filename, parameters.dump_format)
+            if most_recent is None or t > most_recent[1]:
+                most_recent = (filename, t)
+
+    if most_recent is not None:
+        most_recent = most_recent[0]
+
+    return most_recent
+
+
+def prepare_restore(backup_to_restore):
+    if parameters.s3:
+        parameters.dump_path = download_from_s3(backup_to_restore,
+                                                parameters.temp_dir)
+    else:
+        parameters.dump_path = os.path.join(parameters.dump_dir,
+                                            backup_to_restore)
+
+    if not is_dumppath(parameters.dump_path):
+        raise RuntimeError('Invalid backup path; will not be restored')
+
+
 def restore():
-    if parameters.dump_path is None and parameters.restore_last:
-        matching_fname = re.sub('(%.)+', '*', parameters.dump_format.replace('*', '\\*'))
-        if os.path.isdir(parameters.dump_dir):
-            most_recent = None
-            for f in os.listdir(parameters.dump_dir):
-                fpath = os.path.join(parameters.dump_dir, f)
-                if fnmatch.fnmatch(f, matching_fname) and is_dumppath(fpath):
-                    t = time.strptime(f, parameters.dump_format)
-                    if most_recent is None or t > most_recent[1]:
-                        most_recent = (fpath, t)
-            if most_recent is None:
-                raise RuntimeError(('No dump found in directory \'{}\' '
+    parameters.temp_dir = os.path.join(
+        tempfile.gettempdir(),
+        'tmpdir-{}~{}'.format(
+            os.path.basename(__file__),
+            int(time.time())
+        ))
+
+    if parameters.dump_path is None and \
+            (parameters.restore_last or parameters.restore_interactive):
+        if parameters.s3:
+            listdir, complete = s3_listdir, s3_interactive_complete
+        else:
+            listdir, complete = local_listdir, local_interactive_complete
+
+        if parameters.restore_last:
+            backup_to_restore = get_last_backup(listdir)
+
+            if backup_to_restore is None:
+                if parameters.s3:
+                    location = 'S3'
+                else:
+                    location = 'directory \'{}\''.format(parameters.dump_dir)
+
+                raise RuntimeError(('No dump found in {} '
                                     'for format \'{}\'').format(
-                                   parameters.dump_dir,
+                                   location,
                                    parameters.dump_format))
 
-            parameters.dump_path = most_recent[0]
+            prepare_restore(backup_to_restore)
+        else:
+            readline.set_completer_delims(' \t\n;')
+            readline.parse_and_bind("tab: complete")
+            readline.set_completer(complete)
 
-    if parameters.dump_path is None or not os.path.exists(parameters.dump_path):
+            try:
+                found = False
+                while not found:
+                    print('Enter path, or Ctrl+D to abort (use tab for completion)')
+                    path = raw_input('> ')
+
+                    try:
+                        prepare_restore(path)
+                        found = True
+                    except Exception as e:
+                        logger.exception(e)
+            except (KeyboardInterrupt, EOFError):
+                print('Aborted.')
+
+                # Clean up the temp directory if it was used
+                if parameters.temp_dir is not None and os.path.isdir(parameters.temp_dir):
+                    shutil.rmtree(parameters.temp_dir)
+
+                sys.exit(0)
+
+    if parameters.dump_path is None or not is_dumppath(parameters.dump_path):
         raise RuntimeError('No dump specified to restore; please use --dump-path')
 
     # Check dump path validity
@@ -1110,6 +1249,11 @@ def restore():
         name='RestoreProcess({})',
         target=table_restore,
         tables=tables_to_restore)
+
+    # Clean up the temp directory if it was used
+    if parameters.temp_dir is not None and os.path.isdir(parameters.temp_dir):
+        shutil.rmtree(parameters.temp_dir)
+
     if badReturn:
         nErrors = len(badReturn)
         logger.info('Restoration ended with {} error(s)'.format(nErrors))
@@ -1307,6 +1451,11 @@ def parse_args():
         action='store_true',
         help='Restore the last available backup according to '
              'the dump format')
+    parser.add_argument(
+        '--restore-interactive',
+        action='store_true',
+        help='Enter the interactive mode to select which backup to '
+             'restore')
 
     # Parsing
     return parser.parse_args()

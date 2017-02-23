@@ -1058,6 +1058,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '-d', '--debug',
         dest='loglevel',
+        default='INFO',
         action='store_const', const='DEBUG',
         help='Activate debug output')
     parser.add_argument(

@@ -790,6 +790,9 @@ def backup():
     if tar_type(parameters.dump_path) is not None:
         parameters.tar_path = 'dump'
         parameters.tarwrite_queue = multiprocessing.JoinableQueue()
+        if not os.path.exists(os.path.dirname(parameters.dump_path)):
+            os.makedirs(os.path.dirname(parameters.dump_path))
+
         tarwrite_process = TarFileWriter(parameters.dump_path, parameters.tarwrite_queue)
         tarwrite_process.start()
 

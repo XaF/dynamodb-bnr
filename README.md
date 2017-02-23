@@ -25,13 +25,13 @@ When making calls to AWS API, some errors can happen. Here is a list of the erro
 
 ### [CreateTable][aws_errors:createtable]
   - **InternalServerError:** script fails and exit != 0
-  - **LimitExceededException:** wait for 15*(current_retry+1) secondes before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
-  - **ResourceInUseException:** wait for 10*(current_retry+1) secondes before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
+  - **LimitExceededException:** wait for 15*(current_retry+1) seconds before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
+  - **ResourceInUseException:** wait for 10*(current_retry+1) seconds before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
 
 ### [DeleteTable][aws_errors:deletetable]
   - **InternalServerError:** script fails and exit != 0
-  - **LimitExceededException:** wait for 15*(current_retry+1) secondes before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
-  - **ResourceInUseException:** wait for 10*(current_retry+1) secondes before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
+  - **LimitExceededException:** wait for 15*(current_retry+1) seconds before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
+  - **ResourceInUseException:** wait for 10*(current_retry+1) seconds before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
   - **ResourceNotFoundException:** already deleted, ignore
 
 ### [DescribeTable][aws_errors:describetable]
@@ -43,14 +43,14 @@ When making calls to AWS API, some errors can happen. Here is a list of the erro
 
 ### [Scan][aws_errors:scan]
   - **InternalServerError:** script fails and exit != 0
-  - **ProvisionedThroughputExceededException:** wait for 10*(current_retry+1) secondes before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
+  - **ProvisionedThroughputExceededException:** wait for 10*(current_retry+1) seconds before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
   - **ResourceNotFoundException:** should not happen (scan only tables found with ListTables), script fails and exit != 0
 
 ### [BatchWriteItem][aws_errors:batchwriteitem]
 
   - **InternalServerError:** script fails and exit != 0
   - **ItemCollectionSizeLimitExceededException:** should not happen as the maximum batch write is set to the current AWS API maximum of 25, script fails and exit != 0
-  - **ProvisionedThroughputExceededException:** wait for 10*(current_retry+1) secondes before retrying, max retry = 5 (default values)
+  - **ProvisionedThroughputExceededException:** wait for 10*(current_retry+1) seconds before retrying, max retry = 5 (default values)
   - **ResourceNotFoundException:** should not happen (Table is deleted and created just before running the batch write), script fails and exit != 0
 
 

@@ -452,7 +452,7 @@ def manage_db_scan(client_ddb, **kwargs):
         except SocketError as e:
             if e.errno != errno.ECONNRESET or \
                     connresetbypeer_currentretry >= const_parameters.connresetbypeer_maxretry:
-                raise e
+                raise
 
             connresetbypeer_currentretry += 1
             sleeptime = const_parameters.connresetbypeer_sleeptime
@@ -463,7 +463,7 @@ def manage_db_scan(client_ddb, **kwargs):
         except ClientError as e:
             if e.response['Error']['Code'] != 'ProvisionedThroughputExceededException' or \
                     throughputexceeded_currentretry >= const_parameters.throughputexceeded_maxretry:
-                raise e
+                raise
 
             throughputexceeded_currentretry += 1
             sleeptime = const_parameters.throughputexceeded_sleeptime
@@ -513,6 +513,8 @@ def sanity_check_action(threshold, table, aws_value, calc_value):
 
 
 def table_backup(table_name):
+    global logger
+
     client_ddb = get_client_dynamodb()
 
     logger.info('Starting backup of table \'{}\''.format(table_name))
@@ -570,7 +572,7 @@ def table_backup(table_name):
                 table_schema = table_schema['Table']
             except (OpenSSL.SSL.SysCallError, OpenSSL.SSL.Error) as e:
                 if current_retry >= const_parameters.opensslerror_maxretry:
-                    raise e
+                    raise
 
                 logger.warning("Got OpenSSL error, retrying...")
                 current_retry += 1
@@ -681,31 +683,83 @@ def table_backup(table_name):
     logger.info('Ended backup of table \'{}\''.format(table_name))
 
 
+def parallel_worker(job_queue, result_dict):
+    global logger
+
+    logger.info('Worker started.')
+
+    # Get the job
+    job = job_queue.get()
+
+    while job is not None:
+        logger.info(('Received job: {dict_key} = '
+                     '{func}(*{args}, **{kwargs})').format(**{
+                        'dict_key': job.get('dict_key'),
+                        'func': job.get('func'),
+                        'args': job.get('args', []),
+                        'kwargs': job.get('kwargs', {}),
+                     }))
+
+        # Run the job
+        try:
+            job.get('func')(*job.get('args', []), **job.get('kwargs', {}))
+            result_dict[job.get('dict_key')] = 0
+        except Exception as e:
+            logger.exception(e)
+            result_dict[job.get('dict_key')] = 1
+        finally:
+            job_queue.task_done()
+
+        # Get the next job
+        job = job_queue.get()
+
+    job_queue.task_done()
+
+
 def parallel_workers(name, target, tables):
-    processes = []
-    badReturn = []
+    workers = []
+    job_queue = multiprocessing.JoinableQueue()
+    manager = multiprocessing.Manager()
+    result_dict = manager.dict()
+
+    # Create the workers
+    for i in xrange(parameters.max_processes):
+        w = multiprocessing.Process(
+            name=name.format(i),
+            target=parallel_worker,
+            args=(job_queue, result_dict))
+        workers.append(w)
+        w.start()
+
+    # Prepare the jobs
     for table_name in tables:
-        p = multiprocessing.Process(
-            name=name.format(table_name),
-            target=target,
-            args=(table_name,))
-        processes.append(p)
-        p.start()
+        job = {
+            'func': target,
+            'args': (table_name,),
+            'dict_key': table_name
+        }
+        job_queue.put(job)
+
+    # Add as many killer payload as processes
+    for i in xrange(parameters.max_processes):
+        job_queue.put(None)
 
     try:
-        for process in processes:
-            process.join()
-            if process.exitcode:
-                badReturn.append(process)
+        # Wait that the job_queue is finished
+        job_queue.join()
+
+        # Wait for each process to finish
+        for worker in workers:
+            worker.join()
     except KeyboardInterrupt:
         logger.info("Caught KeyboardInterrupt, terminating workers")
-        for process in processes:
-            process.terminate()
-        for process in processes:
-            process.join()
+        for worker in workers:
+            worker.terminate()
+        for worker in workers:
+            worker.join()
         logger.info('All workers terminated')
 
-    return badReturn
+    return [k for k, v in result_dict.items() if v != 0]
 
 
 def upload_to_s3(incomplete=False):
@@ -749,7 +803,7 @@ def upload_to_s3(incomplete=False):
 
             except S3UploadFailedError as e:
                 logger.exception(e)
-                raise e
+                raise
             s3logfname = '{}.log'.format(s3path)
         else:
             dumpdir = os.path.basename(parameters.dump_path)
@@ -767,7 +821,7 @@ def upload_to_s3(incomplete=False):
                         )
                     except S3UploadFailedError as e:
                         logger.exception(e)
-                        raise e
+                        raise
             s3logfname = '{}.log'.format(dumpdir)
         # Upload logfile
         logger.info('Uploading logfile to S3')
@@ -780,7 +834,7 @@ def upload_to_s3(incomplete=False):
             )
         except S3UploadFailedError as e:
             logger.exception(e)
-            raise e
+            raise
 
 
 def download_from_s3(s3path, path=tempfile.gettempdir()):
@@ -874,9 +928,9 @@ def backup():
         logger.info('Backup ended with {} error(s)'.format(nErrors))
         upload_to_s3(incomplete=True)
         raise RuntimeError(('{} error(s) during backup '
-                            'for processes: {}').format(
+                            'for tables: {}').format(
                            nErrors,
-                           ', '.join([x.name for x in badReturn])))
+                           ', '.join(badReturn)))
     else:
         logger.info('Backup ended without error')
         upload_to_s3(incomplete=False)
@@ -940,14 +994,14 @@ def table_delete(client_ddb, table_name):
                 errorcode = e.response['Error']['Code'][:-9].lower()
                 currentRetry[errorcode] += 1
                 if currentRetry[errorcode] >= const_parameters['{}_maxretry'.format(errorcode)]:
-                    raise e
+                    raise
                 sleeptime = const_parameters['{}_sleeptime'.format(errorcode)]
                 sleeptime = sleeptime * currentRetry[errorcode]
                 logger.info("Got \'{}\', waiting {} seconds before retry".format(
                     e.response['Error']['Code'], sleeptime))
                 time.sleep(sleeptime)
             else:
-                raise e
+                raise
 
 
 def table_create(client_ddb, **kwargs):
@@ -978,14 +1032,14 @@ def table_create(client_ddb, **kwargs):
                 errorcode = e.response['Error']['Code'][:-9].lower()
                 currentRetry[errorcode] += 1
                 if currentRetry[errorcode] >= const_parameters['{}_maxretry'.format(errorcode)]:
-                    raise e
+                    raise
                 sleeptime = const_parameters['{}_sleeptime'.format(errorcode)]
                 sleeptime = sleeptime * currentRetry[errorcode]
                 logger.info("Got \'{}\', waiting {} seconds before retry".format(
                     e.response['Error']['Code'], sleeptime))
                 time.sleep(sleeptime)
             else:
-                raise e
+                raise
 
 
 def table_batch_write(client, table_name, items):
@@ -1011,7 +1065,7 @@ def table_batch_write(client, table_name, items):
         except ClientError as e:
             if e.response['Error']['Code'] != 'ProvisionedThroughputExceededException' or \
                     throughputexceeded_currentretry >= const_parameters.throughputexceeded_maxretry:
-                raise e
+                raise
 
             throughputexceeded_currentretry += 1
             sleeptime = const_parameters.throughputexceeded_sleeptime
@@ -1039,6 +1093,8 @@ def load_json_from_stream(f):
 
 
 def table_restore(table_name):
+    global logger
+
     client_ddb = get_client_dynamodb()
 
     # define the table directory
@@ -1258,7 +1314,7 @@ def restore():
         nErrors = len(badReturn)
         logger.info('Restoration ended with {} error(s)'.format(nErrors))
         raise RuntimeError(('{} error(s) during restoration '
-                            'for processes: {}').format(
+                            'for tables: {}').format(
                                 nErrors,
                                 ', '.join([x.name for x in badReturn])))
     else:
@@ -1380,6 +1436,12 @@ def parse_args():
         default='*',
         help='The table to backup or restore (\'*\' means all tables, '
              '\'t*\' means all tables starting with \'t\')')
+    parser.add_argument(
+        '--max-processes',
+        default=multiprocessing.cpu_count(),
+        type=int,
+        help='The maximum number of processes to run concurrently '
+             '(one more process will be run to write to tar files)')
 
     # Dump path options
     parser.add_argument(

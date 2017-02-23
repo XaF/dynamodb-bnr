@@ -1079,6 +1079,14 @@ def table_batch_write(client, table_name, items):
         for put_request in response['UnprocessedItems'][table_name]:
             item = put_request['PutRequest']['Item']
             returnedItems.append(item)
+
+    if returnedItems:
+        nreturnedItems = len(returnedItems)
+        logger.info(('{0} item(s) returned during batch write; sleeping '
+                     '{0} second(s) to avoid congestion').format(
+            nreturnedItems))
+        time.sleep(nreturnedItems)
+
     items[:const_parameters.dynamodb_max_batch_write] = returnedItems
 
     return items
@@ -1144,9 +1152,9 @@ def table_restore(table_name):
             logger.info('No data to restore for table \'{}\''.format(table_name))
             return
 
-        logger.info('Starting restoration of the data of table \'{}\''.format(table_name))
-
         data_files = sorted(os.listdir(table_dump_path_data))
+
+    logger.info('Starting restoration of the data of table \'{}\''.format(table_name))
 
     n_data_files = len(data_files)
     c_data_file = 0
@@ -1170,8 +1178,10 @@ def table_restore(table_name):
 
         while len(items) >= const_parameters.dynamodb_max_batch_write or \
                 (c_data_file == n_data_files and len(items) > 0):
-            logger.debug('Current number of items: '.format(len(items)))
+            logger.debug('Current number of items: {}'.format(len(items)))
             items = table_batch_write(client_ddb, table_name, items)
+
+    logger.info('Ended restoration of table \'{}\''.format(table_name))
 
 
 def get_last_backup(listdir):

@@ -1295,6 +1295,14 @@ def restore():
     if parameters.dump_path is None or not is_dumppath(parameters.dump_path):
         raise RuntimeError('No dump specified to restore; please use --dump-path')
 
+    if is_tarfile(parameters.dump_path) and parameters.extract_before:
+        logger.info('Extracting tar archive \'{}\' to \'{}\''.format(
+            parameters.dump_path, parameters.temp_dir))
+        tar = tarfile.open(parameters.dump_path)
+        tar.extractall(path=parameters.temp_dir)
+        parameters.dump_path = os.path.join(parameters.temp_dir, 'dump')
+        logger.info('Archive extracted, proceeding')
+
     # Check dump path validity
     if not is_dumppath(parameters.dump_path):
         raise RuntimeError(('Path \'{}\' is neither a directory '
@@ -1528,6 +1536,11 @@ def parse_args():
         action='store_true',
         help='Enter the interactive mode to select which backup to '
              'restore')
+    parser.add_argument(
+        '--extract-before',
+        action='store_true',
+        help='Extract the tar file before proceeding to fasten the '
+             'restore process')
 
     # Parsing
     return parser.parse_args()

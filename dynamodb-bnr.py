@@ -58,6 +58,11 @@ class Namespace(object):
     def __str__(self):
         return str(self.__dict__)
 
+
+class SanityCheckException(Exception):
+    pass
+
+
 # class DateTimeEncoder(json.JSONEncoder):
 #    def default(self, o):
 #        if isinstance(o, datetime.datetime):
@@ -480,6 +485,21 @@ def clean_table_schema(table_schema):
     return table_schema
 
 
+def sanity_check_action(threshold, table, aws_value, calc_value):
+    if parameters.sanity_check_action == 'ignore':
+        pass
+
+    message = ('Sanity check went over \'{}\' '
+               'threshold for table \'{}\' (AWS '
+               'advertised {} items, while we scanned {})'
+               ).format(threshold, table, aws_value, calc_value)
+
+    if parameters.sanity_check_action == 'raise':
+        raise SanityCheckException(message)
+    elif parameters.sanity_check_action == 'warning':
+        logger.warning(message)
+
+
 def table_backup(table_name):
     client_ddb = get_client_dynamodb()
 
@@ -525,6 +545,11 @@ def table_backup(table_name):
         logger.info(('Backing up table schema '
                      'for table \'{}\'').format(table_name))
 
+        table_sanity = {
+            'item_count_aws': 0.0,
+            'item_count_calc': 0.0,
+        }
+
         table_schema = None
         current_retry = 0
         while table_schema is None:
@@ -538,6 +563,7 @@ def table_backup(table_name):
                 logger.warning("Got OpenSSL error, retrying...")
                 current_retry += 1
 
+        table_sanity['item_count_aws'] += table_schema['ItemCount']
         table_schema = clean_table_schema(table_schema)
 
         jdump = json.dumps(table_schema,
@@ -563,6 +589,8 @@ def table_backup(table_name):
 
         items_list = manage_db_scan(client_ddb, TableName=table_name)
         while more_items and items_list['ScannedCount'] > 0:
+            table_sanity['item_count_calc'] += items_list['Count']
+
             logger.info(('Backing up items for table'
                          ' \'{}\' ({})').format(table_name, more_items))
             jdump = json.dumps(items_list['Items'],
@@ -590,6 +618,53 @@ def table_backup(table_name):
                 more_items += 1
             else:
                 more_items = False
+
+        # Check the sanity of the backup if requested
+        if parameters.sanity_check_action != 'ignore' and \
+                (parameters.sanity_check_threshold_more is not None or
+                 parameters.sanity_check_threshold_less is not None):
+            # Compute the percent of values that we have in excess or lack
+            if table_sanity['item_count_aws'] == 0:
+                percent_more = float('inf') \
+                    if table_sanity['item_count_calc'] > 0 \
+                    else 0.0
+                percent_less = 0.0
+            elif table_sanity['item_count_calc'] == 0:
+                percent_more = 0.0
+                percent_less = float('inf') \
+                    if table_sanity['item_count_aws'] > 0 \
+                    else 0.0
+            else:
+                percent_more = (table_sanity['item_count_calc'] /
+                                table_sanity['item_count_aws']) - 1
+                percent_less = (1.0 / (percent_more + 1)) - 1
+
+            # Check if a given threshold has been broken
+            broke = False
+            if parameters.sanity_check_threshold_more is not None and \
+                    percent_more > 0 and \
+                    percent_more >= (parameters.sanity_check_threshold_more * 1.0 / 100.0):
+                broke = 'more'
+            elif parameters.sanity_check_threshold_less is not None and \
+                    percent_less > 0 and \
+                    percent_less >= (parameters.sanity_check_threshold_less * 1.0 / 100.0):
+                broke = 'less'
+
+            # Act if a threshold has been broken
+            if broke:
+                sanity_check_action(
+                    broke,
+                    table_name,
+                    int(table_sanity['item_count_aws']),
+                    int(table_sanity['item_count_calc'])
+                )
+            else:
+                logger.info(('Sanity check for table \'{}\' did not break any '
+                             'threshold (AWS advertised {} items, and we '
+                             'scanned {})').format(
+                    table_name,
+                    int(table_sanity['item_count_aws']),
+                    int(table_sanity['item_count_calc'])))
 
     logger.info('Ended backup of table \'{}\''.format(table_name))
 
@@ -1201,6 +1276,27 @@ def parse_args():
         type=int,
         help='The retention policy for the backups, in the form of '
              '\'keep monthly backups for X months\'')
+    parser.add_argument(
+        '--sanity-check-action',
+        default='raise',
+        choices=('ignore', 'warning', 'raise'),
+        help='The action to take when a sanity check threshold is reached, '
+             'ignore just ignores it, warning warn about it and raise raise '
+             'an exception')
+    parser.add_argument(
+        '--sanity-check-threshold-more',
+        default=None,
+        type=int,
+        help='The threshold, in percent, for the number of elements that '
+             'could be in excess of what is advertised by DynamoDB (keep '
+             'in mind that there is an update every six hours)')
+    parser.add_argument(
+        '--sanity-check-threshold-less',
+        default=None,
+        type=int,
+        help='The threshold, in percent, for the number of elements that '
+             'could be in lack of what is advertised by DynamoDB (keep '
+             'in mind that there is an update every six hours)')
 
     # Restore specific options
     parser.add_argument(

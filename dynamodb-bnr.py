@@ -1091,9 +1091,9 @@ if __name__ == '__main__':
              'environment variable AWS_SECRET_ACCESS_KEY)')
     parser.add_argument(
         '--region',
-        default=os.getenv('REGION', None),
+        default=os.getenv('AWS_DEFAULT_REGION', None),
         help='Define the AWS default region (defaults to the environment '
-             'variable REGION)')
+             'variable AWS_DEFAULT_REGION)')
 
     # AWS DynamoDB specific options
     parser.add_argument(
@@ -1110,7 +1110,7 @@ if __name__ == '__main__':
         help='Define the AWS DynamoDB secret key')
     parser.add_argument(
         '--ddb-region',
-        default=os.getenv('DDB_REGION', None),
+        default=os.getenv('DDB_AWS_DEFAULT_REGION', None),
         help='Define the AWS DynamoDB region')
 
     # AWS S3 specific options
@@ -1145,7 +1145,7 @@ if __name__ == '__main__':
         help='Define the AWS S3 secret key')
     parser.add_argument(
         '--s3-region',
-        default=os.getenv('S3_REGION', None),
+        default=os.getenv('S3_AWS_DEFAULT_REGION', None),
         help='Define the AWS S3 region')
     parser.add_argument(
         '--s3-bucket',

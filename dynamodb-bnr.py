@@ -43,9 +43,8 @@ except NameError:
 
 class Namespace(object):
     def __init__(self, adict = None):
-        if adict is None:
-            adict = {}
-        self.__dict__.update(adict)
+        if adict is not None:
+            self.__dict__.update(adict)
 
     def update(self, adict):
         self.__dict__.update(adict)

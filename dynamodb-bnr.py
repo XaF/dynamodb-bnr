@@ -1208,6 +1208,9 @@ def table_restore(table_name, allow_resume=False, resume_args=None):
 
     client_ddb = get_client_dynamodb()
 
+    # If resetting the write capacity is needed
+    reset_capacity = {}
+
     # Open the tarfile
     if is_tarfile(parameters.dump_path):
         tar = tarfile.open(parameters.dump_path)
@@ -1237,6 +1240,64 @@ def table_restore(table_name, allow_resume=False, resume_args=None):
         if 'Table' in table_schema:
             table_schema = table_schema['Table']
         table_schema = clean_table_schema(table_schema)
+
+        # Change the write capacity if requested and needed
+        if parameters.tmp_write_capacity is not None:
+            # Check global throughput
+            table_schema['ProvisionedThroughput'] = \
+                table_schema.get('ProvisionedThroughput', {
+                    'WriteCapacityUnits': 1,
+                    'ReadCapacityUnits': 1
+                })
+            table_schema['ProvisionedThroughput']['WriteCapacityUnits'] = \
+                table_schema['ProvisionedThroughput'].get('WriteCapacityUnits', 1)
+
+            if table_schema['ProvisionedThroughput']['WriteCapacityUnits'] < \
+                    parameters.tmp_write_capacity:
+                reset_capacity['ProvisionedThroughput'] = \
+                    dict(table_schema['ProvisionedThroughput'])
+                table_schema['ProvisionedThroughput']['WriteCapacityUnits'] = \
+                    parameters.tmp_write_capacity
+
+                logger.info(('Write capacity of table \'{}\' will temporarily '
+                             'be set to {} instead of {}').format(
+                    table_name,
+                    parameters.tmp_write_capacity,
+                    reset_capacity['ProvisionedThroughput']['WriteCapacityUnits']))
+
+            # Check global secondary indexes
+            if 'GlobalSecondaryIndexes' in table_schema:
+                for i in xrange(len(table_schema['GlobalSecondaryIndexes'])):
+                    table_schema['GlobalSecondaryIndexes'][i]['ProvisionedThroughput'] = \
+                        table_schema['GlobalSecondaryIndexes'][i].get('ProvisionedThroughput', {
+                            'WriteCapacityUnits': 1,
+                            'ReadCapacityUnits': 1
+                        })
+                    table_schema['GlobalSecondaryIndexes'][i]['ProvisionedThroughput']['WriteCapacityUnits'] = \
+                        table_schema['GlobalSecondaryIndexes'][i]['ProvisionedThroughput'].get('WriteCapacityUnits', 1)
+
+                    if table_schema['GlobalSecondaryIndexes'][i]['ProvisionedThroughput']['WriteCapacityUnits'] < \
+                            parameters.tmp_write_capacity:
+
+                        if 'GlobalSecondaryIndexUpdates' not in reset_capacity:
+                            reset_capacity['GlobalSecondaryIndexUpdates'] = []
+
+                        gsiu = dict(table_schema['GlobalSecondaryIndexes'][i]['ProvisionedThroughput'])
+                        reset_capacity['GlobalSecondaryIndexUpdates'].append({
+                            'Update': {
+                                'IndexName': table_schema['GlobalSecondaryIndexes'][i]['IndexName'],
+                                'ProvisionedThroughput': gsiu,
+                            },
+                        })
+                        table_schema['GlobalSecondaryIndexes'][i]['ProvisionedThroughput']['WriteCapacityUnits'] = \
+                            parameters.tmp_write_capacity
+
+                        logger.info(('Write capacity of global secondary index \'{}\' '
+                                     'will temporarily be set to {} instead '
+                                     'of {}').format(
+                            table_schema['GlobalSecondaryIndexes'][i]['IndexName'],
+                            parameters.tmp_write_capacity,
+                            gsiu['WriteCapacityUnits']))
 
         table_schema['TableName'] = table_name  # Use the directory name as table name
         table_delete(client_ddb, table_name)
@@ -1268,6 +1329,7 @@ def table_restore(table_name, allow_resume=False, resume_args=None):
         c_data_file = 0
         items = []
     else:
+        reset_capacity = resume_args['reset_capacity']
         data_files = resume_args['data_files']
         c_data_file = resume_args['c_data_file']
         items = resume_args['items']
@@ -1329,6 +1391,7 @@ def table_restore(table_name, allow_resume=False, resume_args=None):
                 items = table_batch_write(client_ddb, table_name, items, action)
             except ReturnedItemsException as e:
                 resume_args = {
+                    'reset_capacity': reset_capacity,
                     'data_files': data_files,
                     'c_data_file': c_data_file,
                     'items': e.get_items(),
@@ -1338,6 +1401,27 @@ def table_restore(table_name, allow_resume=False, resume_args=None):
                     delay = e.get_returned_number() * 2,
                     resume_args = resume_args
                 )
+
+    # Resetting the write capacity if needed
+    if reset_capacity:
+        reset_msg = []
+        if 'ProvisionedThroughput' in reset_capacity:
+            reset_msg.append('table \'{}\' to {}'.format(
+                table_name,
+                reset_capacity['ProvisionedThroughput']['WriteCapacityUnits']))
+        if 'GlobalSecondaryIndexUpdates' in reset_capacity:
+            for x in reset_capacity['GlobalSecondaryIndexUpdates']:
+                x = x['Update']
+                reset_msg.append('global secondary index \'{}\' to {}'.format(
+                    x['IndexName'],
+                    x['ProvisionedThroughput']['WriteCapacityUnits']))
+        logger.info('Resetting write capacity of {}'.format(
+            ', '.join(reset_msg)))
+
+        client_ddb.update_table(
+            TableName=table_name,
+            **reset_capacity
+        )
 
     logger.info('Ended restoration of table \'{}\''.format(table_name))
 
@@ -1701,6 +1785,15 @@ def parse_args():
         action='store_true',
         help='Extract the tar file before proceeding to fasten the '
              'restore process')
+    parser.add_argument(
+        '--tmp-write-capacity',
+        default=None,
+        type=int,
+        nargs='?',
+        const=25,
+        help='Set a temporary write capacity for the table if it\'s normal '
+             'write capacity is lower, then reset it to the right value at '
+             'the end of the restore process')
 
     # Parsing
     return parser.parse_args()

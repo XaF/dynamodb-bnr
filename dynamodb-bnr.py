@@ -126,7 +126,7 @@ const_parameters = Namespace({
     'limitexceeded_sleeptime':
         int(os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_SLEEPTIME', 15)),
     'limitexceeded_maxretry':
-        int(os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_MAXRETRY', 5)),
+        int(os.getenv('DYNAMODB_BNR_LIMITEXCEEDED_MAXRETRY', 10)),
     'tableoperation_sleeptime':
         int(os.getenv('DYNAMODB_BNR_TABLEOPERATION_SLEEPTIME', 5)),
     'dynamodb_max_batch_write':

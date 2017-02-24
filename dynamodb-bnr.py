@@ -1492,7 +1492,7 @@ def restore():
         raise RuntimeError(('{} error(s) during restoration '
                             'for tables: {}').format(
                                 nErrors,
-                                ', '.join([x.name for x in badReturn])))
+                                ', '.join(badReturn)))
     else:
         logger.info('Restoration ended without error')
 

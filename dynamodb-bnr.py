@@ -1606,7 +1606,7 @@ def parse_args():
              '\'t*\' means all tables starting with \'t\')')
     parser.add_argument(
         '--max-processes',
-        default=multiprocessing.cpu_count(),
+        default=multiprocessing.cpu_count() * 2,
         type=int,
         help='The maximum number of processes to run concurrently '
              '(one more process will be run to write to tar files)')

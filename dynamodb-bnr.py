@@ -142,6 +142,7 @@ const_parameters = Namespace({
 })
 _global_client_dynamodb = None
 _global_client_s3 = None
+parser = None
 
 
 def get_client_dynamodb():
@@ -226,6 +227,13 @@ class TarFileWriter(multiprocessing.Process):
         tar.close()
 
 
+def parser_error(errmsg):
+    parser.print_usage()
+    print('{}: error: {}'.format(
+        os.path.basename(__file__), errmsg))
+    sys.exit(1)
+
+
 def cli():
     # Set up amazon configuration
     if parameters.access_key is not None:
@@ -254,13 +262,13 @@ def cli():
             (parameters.ddb_access_key is None or
              parameters.ddb_secret_key is None or
              parameters.ddb_region is None):
-        raise RuntimeError(('DynamoDB configuration is incomplete '
-                            '(access key? {}, secret key? {}, region? {}'
-                            ') or profile? {})').format(
-                                parameters.ddb_access_key is not None,
-                                parameters.ddb_secret_key is not None,
-                                parameters.ddb_region is not None,
-                                parameters.ddb_profile is not None))
+        parser_error(('DynamoDB configuration is incomplete '
+                      '(access key? {}, secret key? {}, region? {}'
+                      ') or profile? {})').format(
+            parameters.ddb_access_key is not None,
+            parameters.ddb_secret_key is not None,
+            parameters.ddb_region is not None,
+            parameters.ddb_profile is not None))
 
     # Check that s3 configuration is available if needed
     if parameters.s3 and \
@@ -269,14 +277,14 @@ def cli():
           parameters.s3_region is None or
           parameters.s3_secret_key is None or
           parameters.s3_bucket is None)):
-        raise RuntimeError(('S3 configuration is incomplete '
-                            '(access key? {}, secret key? {}, region? {}, '
-                            'bucket? {}) or profile {}').format(
-                                parameters.s3_access_key is not None,
-                                parameters.s3_secret_key is not None,
-                                parameters.s3_region is not None,
-                                parameters.s3_bucket is not None,
-                                parameters.s3_profile is not None))
+        parser_error(('S3 configuration is incomplete '
+                      '(access key? {}, secret key? {}, region? {}, '
+                      'bucket? {}) or profile {}').format(
+            parameters.s3_access_key is not None,
+            parameters.s3_secret_key is not None,
+            parameters.s3_region is not None,
+            parameters.s3_bucket is not None,
+            parameters.s3_profile is not None))
 
     if parameters.logfile is None:
         fname = os.path.basename(__file__)
@@ -319,7 +327,7 @@ def cli():
         if parameters.command in source:
             source[parameters.command]()
             return
-    raise RuntimeError('Command {} not found'.format(parameters.command))
+    parser_error('Command \'{}\' not found'.format(parameters.command))
 
 
 def days_difference(d1, d2):
@@ -1490,6 +1498,8 @@ def restore():
 
 
 def parse_args():
+    global parser
+
     parser = argparse.ArgumentParser(
         description='DynamoDB backup\'n\'restore python script '
                     'with tarfile management')

@@ -19,6 +19,7 @@ import glob
 import itertools
 import json
 import logging
+import math
 import multiprocessing
 import OpenSSL
 import os
@@ -70,6 +71,36 @@ class Namespace(object):
 
 class SanityCheckException(Exception):
     pass
+
+
+class ReturnedItemsException(Exception):
+    def __init__(self, message, returned_number, items):
+        super(ReturnedItemsException, self).__init__(message)
+        self.__returned_number = returned_number
+        self.__items = items
+
+    def get_returned_number(self):
+        return self.__returned_number
+
+    def get_items(self):
+        return self.__items
+
+
+class JobResumeRequestException(Exception):
+    def __init__(self, message, delay = 0, *args, **kwargs):
+        super(JobResumeRequestException, self).__init__(message)
+        self.__delay = delay
+        self.__args = args
+        self.__kwargs = kwargs
+
+    def get_delay(self):
+        return self.__delay
+
+    def get_args(self):
+        return self.__args
+
+    def get_kwargs(self):
+        return self.__kwargs
 
 
 # class DateTimeEncoder(json.JSONEncoder):
@@ -512,7 +543,8 @@ def sanity_check_action(threshold, table, aws_value, calc_value):
         logger.warning(message)
 
 
-def table_backup(table_name):
+# allow_resume and resume_args are not used in the backup context
+def table_backup(table_name, allow_resume=False, resume_args=None):
     global logger
 
     client_ddb = get_client_dynamodb()
@@ -691,19 +723,55 @@ def parallel_worker(job_queue, result_dict):
     # Get the job
     job = job_queue.get()
 
+    # Run until receiving killing payload
     while job is not None:
         logger.info(('Received job: {dict_key} = '
                      '{func}(*{args}, **{kwargs})').format(**{
                         'dict_key': job.get('dict_key'),
                         'func': job.get('func'),
                         'args': job.get('args', []),
-                        'kwargs': job.get('kwargs', {}),
+                        'kwargs': job.get('kwargs', {}).keys(),
                      }))
 
         # Run the job
         try:
-            job.get('func')(*job.get('args', []), **job.get('kwargs', {}))
-            result_dict[job.get('dict_key')] = 0
+            go_to_next = False
+            while not go_to_next:
+                try:
+                    # Waiting for the right resume time
+                    if 'resume_time' in job:
+                        sleeptime = int(math.ceil(job['resume_time'] - time.time()))
+                        if sleeptime > 0:
+                            logger.info(('Waiting {} seconds before '
+                                         'resuming job'.format(sleeptime)))
+                            time.sleep(sleeptime)
+
+                    logger.info(('Running job for \'{dict_key}\''.format(**job)))
+                    job.get('func')(*job.get('args', []), **job.get('kwargs', {}))
+                    result_dict[job.get('dict_key')] = 0
+                    go_to_next = True
+                except JobResumeRequestException as e:
+                    newjob = job
+                    newjob['args'] = tuple(list(newjob.get('args', [])) + list(e.get_args()))
+                    newjob['kwargs'] = newjob.get('kwargs', {})
+                    newjob['kwargs'].update(e.get_kwargs())
+                    newjob['resume_time'] = time.time() + e.get_delay()
+
+                    if job_queue.empty():
+                        # Do not wait for another process to get the task, just
+                        # run it directly as nothing seems to be waiting
+                        logger.info(('Job resume request received for '
+                                     'job \'{dict_key}\'; will resume it '
+                                     'directly').format(**job))
+                        job = newjob
+                    else:
+                        # There is still work to do in the job queue, go to the
+                        # next task while this one cools down
+                        logger.info(('Job resume request received for '
+                                     'job \'{dict_key}\'; sending to the '
+                                     'back of the job queue').format(**job))
+                        job_queue.put(newjob)
+                        go_to_next = True
         except Exception as e:
             logger.exception(e)
             result_dict[job.get('dict_key')] = 1
@@ -714,6 +782,7 @@ def parallel_worker(job_queue, result_dict):
         job = job_queue.get()
 
     job_queue.task_done()
+    logger.info('Worker exiting.')
 
 
 def parallel_workers(name, target, tables):
@@ -723,7 +792,10 @@ def parallel_workers(name, target, tables):
     result_dict = manager.dict()
 
     # Create the workers
-    for i in xrange(parameters.max_processes):
+    nworkers = min(parameters.max_processes, len(tables))
+    logger.info(('Starting {} workers ({} max) for {} tables').format(
+        nworkers, parameters.max_processes, len(tables)))
+    for i in xrange(nworkers):
         w = multiprocessing.Process(
             name=name.format(i),
             target=parallel_worker,
@@ -735,17 +807,24 @@ def parallel_workers(name, target, tables):
     for table_name in tables:
         job = {
             'func': target,
-            'args': (table_name,),
+            'kwargs': {
+                'table_name': table_name,
+                'allow_resume': True,
+                'resume_args': None,
+            },
             'dict_key': table_name
         }
         job_queue.put(job)
 
-    # Add as many killer payload as processes
-    for i in xrange(parameters.max_processes):
-        job_queue.put(None)
-
     try:
         # Wait that the job_queue is finished
+        job_queue.join()
+
+        # Add as many killer payload as processes
+        for i in xrange(nworkers):
+            job_queue.put(None)
+
+        # Wait that the job_queue to be empty of the killer payloads
         job_queue.join()
 
         # Wait for each process to finish
@@ -753,10 +832,19 @@ def parallel_workers(name, target, tables):
             worker.join()
     except KeyboardInterrupt:
         logger.info("Caught KeyboardInterrupt, terminating workers")
+
+        # Add as many killer payload as processes
+        for i in xrange(nworkers):
+            job_queue.put(None)
+
+        # Terminate all the workers
         for worker in workers:
             worker.terminate()
+
+        # Wait for them to terminate properly
         for worker in workers:
             worker.join()
+
         logger.info('All workers terminated')
 
     return [k for k, v in result_dict.items() if v != 0]
@@ -1042,7 +1130,7 @@ def table_create(client_ddb, **kwargs):
                 raise
 
 
-def table_batch_write(client, table_name, items):
+def table_batch_write(client, table_name, items, action_returned='sleep'):
     put_requests = []
     for item in items[:const_parameters.dynamodb_max_batch_write]:
         put_requests.append({
@@ -1080,14 +1168,21 @@ def table_batch_write(client, table_name, items):
             item = put_request['PutRequest']['Item']
             returnedItems.append(item)
 
+    items[:const_parameters.dynamodb_max_batch_write] = returnedItems
+
     if returnedItems:
         nreturnedItems = len(returnedItems)
-        logger.info(('{0} item(s) returned during batch write; sleeping '
-                     '{0} second(s) to avoid congestion').format(
-            nreturnedItems))
-        time.sleep(nreturnedItems)
-
-    items[:const_parameters.dynamodb_max_batch_write] = returnedItems
+        message = ('Table \'{0}\': {1} item(s) returned during '
+                   'batch write').format(
+            table_name, nreturnedItems)
+        if action_returned == 'raise':
+            raise ReturnedItemsException(message, nreturnedItems, items)
+        else:
+            logger.info('{}{}'.format(
+                message,
+                '; sleeping {} second(s) to avoid congestion'.format(
+                    nreturnedItems)))
+            time.sleep(nreturnedItems)
 
     return items
 
@@ -1100,66 +1195,107 @@ def load_json_from_stream(f):
     return json.loads(content)
 
 
-def table_restore(table_name):
+def table_restore(table_name, allow_resume=False, resume_args=None):
     global logger
 
     client_ddb = get_client_dynamodb()
 
-    # define the table directory
+    # Open the tarfile
     if is_tarfile(parameters.dump_path):
         tar = tarfile.open(parameters.dump_path)
         table_dump_path = os.path.join(parameters.tar_path, table_name)
-        try:
-            member = tar.getmember(os.path.join(table_dump_path, const_parameters.schema_file))
-            f = tar.extractfile(member)
-
-            table_schema = load_json_from_stream(f)
-        except KeyError as e:
-            raise RuntimeError('Schema of table \'{}\' not found'.format(table_name))
     else:
         table_dump_path = os.path.join(parameters.dump_path, table_name)
-        if not os.path.isdir(table_dump_path):
-            raise RuntimeError('Schema of table \'{}\' not found'.format(table_name))
 
-        with open(os.path.join(table_dump_path, const_parameters.schema_file), 'r') as f:
-            table_schema = load_json_from_stream(f)
+    # Insure that we're only doing that the first time and not when we
+    # are resuming a restore task
+    if not allow_resume or resume_args is None:
+        # define the table directory
+        if is_tarfile(parameters.dump_path):
+            try:
+                member = tar.getmember(os.path.join(table_dump_path, const_parameters.schema_file))
+                f = tar.extractfile(member)
 
-    if 'Table' in table_schema:
-        table_schema = table_schema['Table']
-    table_schema = clean_table_schema(table_schema)
+                table_schema = load_json_from_stream(f)
+            except KeyError as e:
+                raise RuntimeError('Schema of table \'{}\' not found'.format(table_name))
+        else:
+            if not os.path.isdir(table_dump_path):
+                raise RuntimeError('Schema of table \'{}\' not found'.format(table_name))
 
-    table_schema['TableName'] = table_name  # Use the directory name as table name
-    table_delete(client_ddb, table_name)
-    table_create(client_ddb, **table_schema)
+            with open(os.path.join(table_dump_path, const_parameters.schema_file), 'r') as f:
+                table_schema = load_json_from_stream(f)
+
+        if 'Table' in table_schema:
+            table_schema = table_schema['Table']
+        table_schema = clean_table_schema(table_schema)
+
+        table_schema['TableName'] = table_name  # Use the directory name as table name
+        table_delete(client_ddb, table_name)
+        table_create(client_ddb, **table_schema)
 
     table_dump_path_data = os.path.join(table_dump_path, const_parameters.data_dir)
-    if is_tarfile(parameters.dump_path):
-        try:
-            member = tar.getmember(table_dump_path_data)
-            # Search for the restoration files in the tar
-            data_files = []
-            for member in tar.getmembers():
-                if member.isfile() and \
-                        os.sep.join(os.path.split(member.name)[:-1]) == table_dump_path_data and \
-                        fnmatch.fnmatch(member.name, '*.json'):
-                    data_files.append(os.path.basename(member.name))
-            data_files.sort()
-        except KeyError as e:
-            logger.info('No data to restore for table \'{}\''.format(table_name))
-            return
+    if not allow_resume or resume_args is None:
+        if is_tarfile(parameters.dump_path):
+            try:
+                member = tar.getmember(table_dump_path_data)
+                # Search for the restoration files in the tar
+                data_files = []
+                for member in tar.getmembers():
+                    if member.isfile() and \
+                            os.sep.join(os.path.split(member.name)[:-1]) == table_dump_path_data and \
+                            fnmatch.fnmatch(member.name, '*.json'):
+                        data_files.append(os.path.basename(member.name))
+                data_files.sort()
+            except KeyError as e:
+                logger.info('No data to restore for table \'{}\''.format(table_name))
+                return
+        else:
+            if not os.path.isdir(table_dump_path_data):
+                logger.info('No data to restore for table \'{}\''.format(table_name))
+                return
+
+            data_files = sorted(os.listdir(table_dump_path_data))
+
+        c_data_file = 0
+        items = []
     else:
-        if not os.path.isdir(table_dump_path_data):
-            logger.info('No data to restore for table \'{}\''.format(table_name))
-            return
-
-        data_files = sorted(os.listdir(table_dump_path_data))
-
-    logger.info('Starting restoration of the data of table \'{}\''.format(table_name))
+        data_files = resume_args['data_files']
+        c_data_file = resume_args['c_data_file']
+        items = resume_args['items']
 
     n_data_files = len(data_files)
-    c_data_file = 0
-    items = []
-    for data_file in data_files:
+
+    if resume_args is not None:
+        start_or_resume = 'Resuming'
+        end_text = '({} items currently loaded and {} files left)'.format(
+            len(items), n_data_files - c_data_file)
+    else:
+        start_or_resume = 'Starting'
+        end_text = ''
+
+    logger.info('{} restoration of the data for table \'{}\'{}'.format(
+        start_or_resume, table_name, end_text))
+
+    # If some items are still to be processed...
+    if resume_args is not None:
+        while len(items) >= const_parameters.dynamodb_max_batch_write or \
+                (c_data_file == n_data_files and len(items) > 0):
+            logger.debug('Current number of items: {}'.format(len(items)))
+            try:
+                items = table_batch_write(client_ddb, table_name, items, 'raise')
+            except ReturnedItemsException as e:
+                resume_args['items'] = e.get_items()
+                raise JobResumeRequestException(
+                    message = '{} returned items'.format(e.get_returned_number()),
+                    delay = e.get_returned_number() * 2,
+                    resume_args = resume_args
+                )
+
+    # Treat files containing items
+    for i in xrange(c_data_file, n_data_files):
+        data_file = data_files[i]
+
         c_data_file += 1
         logger.info("Loading items from file {} of {}".format(c_data_file, n_data_files))
 
@@ -1176,10 +1312,24 @@ def table_restore(table_name):
             loaded_items = loaded_items['Items']
         items.extend(loaded_items)
 
+        action = 'raise' if allow_resume else 'sleep'
+
         while len(items) >= const_parameters.dynamodb_max_batch_write or \
                 (c_data_file == n_data_files and len(items) > 0):
             logger.debug('Current number of items: {}'.format(len(items)))
-            items = table_batch_write(client_ddb, table_name, items)
+            try:
+                items = table_batch_write(client_ddb, table_name, items, action)
+            except ReturnedItemsException as e:
+                resume_args = {
+                    'data_files': data_files,
+                    'c_data_file': c_data_file,
+                    'items': e.get_items(),
+                }
+                raise JobResumeRequestException(
+                    message = '{} returned items'.format(e.get_returned_number()),
+                    delay = e.get_returned_number() * 2,
+                    resume_args = resume_args
+                )
 
     logger.info('Ended restoration of table \'{}\''.format(table_name))
 

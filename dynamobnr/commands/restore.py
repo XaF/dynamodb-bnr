@@ -289,7 +289,7 @@ def table_restore(table_name, allow_resume=False, resume_args=None):
         _RestoreInstance.get_logger().info(
             'Resetting write capacity of {}'.format(', '.join(reset_msg)))
 
-        client_ddb.update_table(
+        _RestoreInstance.table_update(
             TableName=table_name,
             **reset_capacity
         )
@@ -434,6 +434,35 @@ class Restore(common.Command):
                     table_status = client_ddb.describe_table(TableName=table_name)
                     table_status = table_status["Table"]["TableStatus"]
                 created = True
+            except ClientError as e:
+                if e.response['Error']['Code'] in managedErrors:
+                    errorcode = e.response['Error']['Code'][:-9].lower()
+                    currentRetry[errorcode] += 1
+                    if currentRetry[errorcode] >= self._const_parameters['{}_maxretry'.format(errorcode)]:
+                        raise
+                    sleeptime = self._const_parameters['{}_sleeptime'.format(errorcode)]
+                    sleeptime = sleeptime * currentRetry[errorcode]
+                    self._logger.info(
+                        'Got \'{}\', waiting {} seconds before retry'.format(
+                            e.response['Error']['Code'], sleeptime))
+                    time.sleep(sleeptime)
+                else:
+                    raise
+
+    def table_update(self, **kwargs):
+        client_ddb = self._aws.get_client_dynamodb()
+
+        updated = False
+        managedErrors = ['ResourceInUseException', 'LimitExceededException']
+        currentRetry = {
+            'resourceinuse': 0,
+            'limitexceeded': 0,
+        }
+
+        while not updated:
+            try:
+                client_ddb.update_table(**kwargs)
+                updated = True
             except ClientError as e:
                 if e.response['Error']['Code'] in managedErrors:
                     errorcode = e.response['Error']['Code'][:-9].lower()

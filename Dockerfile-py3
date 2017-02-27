@@ -1,5 +1,5 @@
-# Base the DynamoDB B'n'R docker container on python 2
-FROM python:2.7
+# Base the DynamoDB B'n'R docker container on python 3
+FROM python:3.5
 
 # Add the tool directory
 ADD . /dynamobnr

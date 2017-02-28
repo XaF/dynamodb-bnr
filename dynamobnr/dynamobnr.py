@@ -45,6 +45,8 @@ const_parameters = Namespace({
         int(os.getenv('DYNAMODB_BNR_ECONNRESET_MAXRETRY', 15)),
     'connresetbypeer_maxretry':
         int(os.getenv('DYNAMODB_BNR_ECONNRESET_MAXRETRY', 5)),
+    'wrongschema_maxretry':
+        int(os.getenv('DYNAMODB_BNR_WRONGSCHEMA_MAXRETRY', 5)),
 })
 
 parser = None
@@ -383,6 +385,13 @@ def parse_args():
         help='Set a temporary write capacity for the table if it\'s normal '
              'write capacity is lower, then reset it to the right value at '
              'the end of the restore process')
+    parser.add_argument(
+        '--ensure-matching-names',
+        default='warning',
+        choices=('ignore', 'warning', 'raise'),
+        help='Ensure that the name of the directory in which a table is '
+             'stored matches the name of that table in the stored schema. '
+             'By default, a warning will emited.')
 
     # Parsing
     return parser.parse_args()

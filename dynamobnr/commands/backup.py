@@ -92,17 +92,29 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
         }
 
         table_schema = None
-        current_retry = 0
+        retry = {
+            'openssl': 0,
+            'wrong_schema': 0
+        }
         while table_schema is None:
             try:
                 table_schema = client_ddb.describe_table(TableName=table_name)
                 table_schema = table_schema['Table']
+
+                if table_schema['TableName'] != table_name:
+                    if retry['wrong_schema'] >= _BackupInstance.get_const_parameters().wrongschema_maxretry:
+                        raise SanityCheckException(
+                            'Unable to get the schema for table \'{}\''.format(
+                                table_name))
+
+                    table_schema = None
+                    retry['wrong_schema'] += 1
             except (OpenSSL.SSL.SysCallError, OpenSSL.SSL.Error) as e:
-                if current_retry >= _BackupInstance.get_const_parameters().opensslerror_maxretry:
+                if retry['openssl'] >= _BackupInstance.get_const_parameters().opensslerror_maxretry:
                     raise
 
                 _BackupInstance.get_logger().warning("Got OpenSSL error, retrying...")
-                current_retry += 1
+                retry['openssl'] += 1
 
         table_sanity['item_count_aws'] += table_schema['ItemCount']
         table_schema = common.clean_table_schema(table_schema)

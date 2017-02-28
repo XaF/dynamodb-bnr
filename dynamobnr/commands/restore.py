@@ -17,6 +17,7 @@ import time
 from . import common
 from . import parallelworkers
 from . import tartools
+from .backup import SanityCheckException
 
 try:
     xrange
@@ -94,6 +95,23 @@ def table_restore(table_name, allow_resume=False, resume_args=None):
             table_schema = table_schema['Table']
         table_schema = common.clean_table_schema(table_schema)
 
+        # Warning if the directory does not have the same name as in the schema
+        if table_schema['TableName'] != table_name:
+            if _RestoreInstance.get_parameters().ensure_matching_names != 'ignore':
+                message = (
+                    'Directory table name \'{}\' does not match schema '
+                    'table name \'{}\''.format(
+                        table_name,
+                        table_schema['TableName']
+                    ))
+                if _RestoreInstance.get_parameters().ensure_matching_names == 'raise':
+                    raise SanityCheckException(message)
+
+                _RestoreInstance.get_logger().warning(
+                    '{}; using directory table name.'.format(message))
+
+            table_schema['TableName'] = table_name
+
         # Change the write capacity if requested and needed
         if _RestoreInstance.get_parameters().tmp_write_capacity is not None:
             # Check global throughput
@@ -154,8 +172,10 @@ def table_restore(table_name, allow_resume=False, resume_args=None):
                                 _RestoreInstance.get_parameters().tmp_write_capacity,
                                 gsiu['WriteCapacityUnits']))
 
-        table_schema['TableName'] = table_name  # Use the directory name as table name
+        # Delete the table
         _RestoreInstance.table_delete(table_name)
+
+        # Create the table
         _RestoreInstance.table_create(**table_schema)
 
     table_dump_path_data = os.path.join(

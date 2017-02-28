@@ -73,12 +73,12 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
         info = tarfile.TarInfo(table_dump_path)
         info.type = tarfile.DIRTYPE
         info.mode = 0o755
-        _BackupInstance.get_parameters().tarwrite_queue.put({'tarinfo': info})
+        _BackupInstance.tarwrite_queue.put({'tarinfo': info})
 
         info = tarfile.TarInfo(table_dump_path_data)
         info.type = tarfile.DIRTYPE
         info.mode = 0o755
-        _BackupInstance.get_parameters().tarwrite_queue.put({'tarinfo': info})
+        _BackupInstance.tarwrite_queue.put({'tarinfo': info})
 
     # get table schema
     if _BackupInstance.get_parameters().backup_only is None or \
@@ -116,7 +116,7 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
             info = tarfile.TarInfo(name=fpath)
             info.size = len(f.getvalue())
             info.mode = 0o644
-            _BackupInstance.get_parameters().tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
+            _BackupInstance.tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
         else:
             with open(fpath, 'w+') as f:
                 f.write(jdump)
@@ -146,7 +146,7 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
                 info = tarfile.TarInfo(name=fpath)
                 info.size = len(f.getvalue())
                 info.mode = 0o644
-                _BackupInstance.get_parameters().tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
+                _BackupInstance.tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
             else:
                 with open(fpath, 'w+') as f:
                     f.write(jdump)
@@ -381,20 +381,20 @@ class Backup(common.Command):
 
         if tartools.tar_type(self._parameters.dump_path) is not None:
             self._parameters.tar_path = 'dump'
-            self._parameters.tarwrite_queue = multiprocessing.JoinableQueue()
+            self.tarwrite_queue = multiprocessing.JoinableQueue()
             if not os.path.exists(os.path.dirname(self._parameters.dump_path)):
                 os.makedirs(os.path.dirname(self._parameters.dump_path))
 
             tarwrite_process = tartools.TarFileWriter(
                 self._parameters.dump_path,
-                self._parameters.tarwrite_queue,
+                self.tarwrite_queue,
                 self._logger)
             tarwrite_process.start()
 
             info = tarfile.TarInfo(self._parameters.tar_path)
             info.type = tarfile.DIRTYPE
             info.mode = 0o755
-            self._parameters.tarwrite_queue.put({'tarinfo': info})
+            self.tarwrite_queue.put({'tarinfo': info})
 
         tables_to_backup = self.get_dynamo_matching_table_names(self._parameters.table)
         if not tables_to_backup:
@@ -417,8 +417,8 @@ class Backup(common.Command):
         )
 
         if self._parameters.tar_path is not None:
-            self._parameters.tarwrite_queue.put(None)
-            self._parameters.tarwrite_queue.join()
+            self.tarwrite_queue.put(None)
+            self.tarwrite_queue.join()
 
         if badReturn:
             nErrors = len(badReturn)

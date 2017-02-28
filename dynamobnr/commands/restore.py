@@ -55,8 +55,6 @@ _RestoreInstance = None
 
 
 def table_restore(table_name, allow_resume=False, resume_args=None):
-    client_ddb = _RestoreInstance.get_aws().get_client_dynamodb()
-
     # If resetting the write capacity is needed
     reset_capacity = {}
 

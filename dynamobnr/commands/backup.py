@@ -434,12 +434,12 @@ class Backup(common.Command):
 
         if badReturn:
             nErrors = len(badReturn)
-            self._logger.info('Backup ended with {} error(s)'.format(nErrors))
-            self.upload_to_s3(incomplete=True)
-            raise RuntimeError(('{} error(s) during backup '
+            err = RuntimeError(('Backup ended with {} error(s) '
                                 'for tables: {}').format(
-                               nErrors,
-                               ', '.join(badReturn)))
+                                    nErrors,
+                                    ', '.join(badReturn)))
+            self._logger.exception(err)
+            raise err
         else:
             self._logger.info('Backup ended without error')
             self.upload_to_s3(incomplete=False)

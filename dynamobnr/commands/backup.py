@@ -129,7 +129,7 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
         _BackupInstance.get_logger().info("Backing up items for table \'{}\'".format(table_name))
 
         items_list = _BackupInstance.manage_db_scan(client_ddb, TableName=table_name)
-        while more_items and items_list['ScannedCount'] > 0:
+        while more_items and items_list['Count'] > 0:
             table_sanity['item_count_calc'] += items_list['Count']
 
             _BackupInstance.get_logger().info(('Backing up items for table'

@@ -91,11 +91,12 @@ def cli():
         if parameters.s3_profile is None:
             parameters.s3_profile = parameters.profile
 
-    # Check that dynamodb configuration is available
-    if parameters.ddb_profile is None and \
-            (parameters.ddb_access_key is None or
-             parameters.ddb_secret_key is None or
-             parameters.ddb_region is None):
+    # Check that dynamodb configuration is available if needed
+    if parameters.command != 'check' and \
+        (parameters.ddb_profile is None and
+         (parameters.ddb_access_key is None or
+          parameters.ddb_secret_key is None or
+          parameters.ddb_region is None)):
         parser_error(('DynamoDB configuration is incomplete '
                       '(access key? {}, secret key? {}, region? {}'
                       ') or profile? {})').format(
@@ -182,7 +183,11 @@ def parse_args():
     # Available commands
     parser.add_argument(
         'command',
-        choices=('backup', 'restore'),
+        choices=(
+            'backup',
+            'restore',
+            'check',
+        ),
         help='The command to run')
 
     # Logging options

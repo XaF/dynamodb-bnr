@@ -591,7 +591,7 @@ class Restore(common.Command):
 
         return most_recent
 
-    def prepare_restore(self, backup_to_restore):
+    def prepare_restore_path(self, backup_to_restore):
         if self._parameters.s3:
             self._parameters.dump_path = self.download_from_s3(backup_to_restore,
                                                                self._parameters.temp_dir)
@@ -602,14 +602,12 @@ class Restore(common.Command):
         if not tartools.is_dumppath(self._parameters.dump_path):
             raise RuntimeError('Invalid backup path; will not be restored')
 
-    def run(self):
-        global _RestoreInstance
-
+    def init_restore(self):
         self._parameters.temp_dir = os.path.join(
             tempfile.gettempdir(),
             'tmpdir-{}~{}'.format(
                 os.path.basename(__file__),
-                int(time.time())
+                time.strftime('%Y%m%d%H%M%S')
             ))
 
         if self._parameters.dump_path is None and \
@@ -620,20 +618,21 @@ class Restore(common.Command):
                 listdir, complete = self.local_listdir, self.local_interactive_complete
 
             if self._parameters.restore_last:
+                if self._parameters.s3:
+                    location = 'S3'
+                else:
+                    location = 'directory \'{}\''.format(self._parameters.dump_dir)
+
+                self._logger.info('Searching for last backup in {}'.format(location))
                 backup_to_restore = self.get_last_backup(listdir)
 
                 if backup_to_restore is None:
-                    if self._parameters.s3:
-                        location = 'S3'
-                    else:
-                        location = 'directory \'{}\''.format(self._parameters.dump_dir)
-
                     raise RuntimeError(('No dump found in {} '
                                         'for format \'{}\'').format(
                                        location,
                                        self._parameters.dump_format))
 
-                self.prepare_restore(backup_to_restore)
+                self.prepare_restore_path(backup_to_restore)
             else:
                 readline.set_completer_delims(' \t\n;')
                 readline.parse_and_bind("tab: complete")
@@ -646,7 +645,7 @@ class Restore(common.Command):
                         path = raw_input('> ')
 
                         try:
-                            self.prepare_restore(path)
+                            self.prepare_restore_path(path)
                             found = True
                         except Exception as e:
                             self._logger.exception(e)
@@ -690,30 +689,42 @@ class Restore(common.Command):
                 self._parameters.table))
             sys.exit(1)
 
-        self._logger.info('The following tables will be restored: {}'.format(
-            ', '.join(tables_to_restore)))
+        return tables_to_restore
 
-        _RestoreInstance = self
-        badReturn = parallelworkers.ParallelWorkers(
-            max_processes=self._parameters.max_processes,
-            logger=self._logger,
-        ).launch(
-            name='RestoreProcess({})',
-            target=table_restore,
-            tables=tables_to_restore
-        )
-
+    def clean_tmp_dir(self):
         # Clean up the temp directory if it was used
         if self._parameters.temp_dir is not None and \
                 os.path.isdir(self._parameters.temp_dir):
             shutil.rmtree(self._parameters.temp_dir)
 
-        if badReturn:
-            nErrors = len(badReturn)
-            self._logger.info('Restoration ended with {} error(s)'.format(nErrors))
-            raise RuntimeError(('{} error(s) during restoration '
-                                'for tables: {}').format(
-                                    nErrors,
-                                    ', '.join(badReturn)))
-        else:
-            self._logger.info('Restoration ended without error')
+    def run(self):
+        global _RestoreInstance
+
+        try:
+            tables_to_restore = self.init_restore()
+
+            self._logger.info('The following tables will be restored: {}'.format(
+                ', '.join(tables_to_restore)))
+
+            _RestoreInstance = self
+            badReturn = parallelworkers.ParallelWorkers(
+                max_processes=self._parameters.max_processes,
+                logger=self._logger,
+            ).launch(
+                name='RestoreProcess({})',
+                target=table_restore,
+                tables=tables_to_restore
+            )
+
+            if badReturn:
+                nErrors = len(badReturn)
+                err = RuntimeError(('Restoration ended with {} error(s) '
+                                    'for tables: {}').format(
+                                        nErrors,
+                                        ', '.join(badReturn)))
+                self._logger.exception(err)
+                raise err
+            else:
+                self._logger.info('Restoration ended without error')
+        finally:
+            self.clean_tmp_dir()

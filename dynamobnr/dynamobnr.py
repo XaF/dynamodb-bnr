@@ -59,7 +59,7 @@ aws = None
 def parser_error(errmsg):
     parser.print_usage()
     print('{}: error: {}'.format(
-        os.path.basename(__file__), errmsg))
+        os.path.basename(sys.argv[0]), errmsg))
     sys.exit(1)
 
 

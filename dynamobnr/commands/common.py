@@ -156,7 +156,7 @@ class Command:
 
         while len(objects) > 0:
             self._logger.debug('Current number of objects to delete: '.format(len(objects)))
-            objects = self._s3_delete_objects(objects)
+            objects = self.s3_delete_objects(objects)
 
     def apply_retention_policy(self, days, weeks, months,
                                listdircall=local_listdir,

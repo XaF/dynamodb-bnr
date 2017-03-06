@@ -68,7 +68,8 @@ def cli():
     parameters = parse_args()
     parameters.tar_path = None
 
-    logger = logging.getLogger(os.path.basename(__file__))
+    logger = logging.getLogger('.'.join(
+        os.path.basename(__file__).split('.')[:-1]))
 
     # Set up amazon configuration
     if parameters.access_key is not None:

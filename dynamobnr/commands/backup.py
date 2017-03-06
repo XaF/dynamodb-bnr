@@ -261,7 +261,8 @@ class Backup(common.Command):
             if self._parameters.tar_path is not None:
                 s3path = os.path.basename(self._parameters.dump_path)
                 if incomplete:
-                    s3path = '{}~incomplete'.format(s3path)
+                    s3path = '{}{}'.format(
+                        s3path, self._const_parameters.incomplete_suffix)
                 try:
                     client_s3.upload_file(
                         Filename=self._parameters.dump_path,

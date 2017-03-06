@@ -21,6 +21,7 @@ const_parameters = Namespace({
     'json_indent': 2,
     'schema_file': 'schema.json',
     'data_dir': 'data',
+    'incomplete_suffix': '~incomplete',
     'throughputexceeded_sleeptime':
         int(os.getenv('DYNAMODB_BNR_THROUGHPUTEXCEEDED_SLEEPTIME', 10)),
     'throughputexceeded_maxretry':

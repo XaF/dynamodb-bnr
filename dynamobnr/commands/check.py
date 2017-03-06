@@ -94,7 +94,7 @@ class Check(restore.Restore):
                 max_processes=self._parameters.max_processes,
                 logger=self._logger,
             ).launch(
-                name='RestoreProcess({})',
+                name='CheckProcess({})',
                 target=table_check,
                 tables=tables_to_check
             )

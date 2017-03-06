@@ -172,29 +172,65 @@ class Command:
 
         matching_fname = re.sub(
             '(%.)+', '*', self._parameters.dump_format.replace('*', '\\*'))
-        for fname in listdircall():
-            if fnmatch.fnmatch(fname, matching_fname):
-                ftime = datetime.datetime.strptime(
-                    fname, self._parameters.dump_format)
+        matching_fname_incomplete = '{}{}'.format(
+            matching_fname, self._const_parameters.incomplete_suffix)
 
+        for fname in listdircall():
+            # Check if the filename matches a backup name, either full or
+            # incomplete, and if so apply the policy for that file
+            match = fnmatch.fnmatch(fname, matching_fname)
+            incomplete = fnmatch.fnmatch(fname, matching_fname_incomplete)
+
+            if match or incomplete:
+                # Get the date and time of the backup from the file name
+                dump_format = self._parameters.dump_format
+                if incomplete:
+                    dump_format = '{}{}'.format(
+                        dump_format, self._const_parameters.incomplete_suffix)
+
+                ftime = datetime.datetime.strptime(fname, dump_format)
+
+                # If the backup is more recent than the limit of days to keep,
+                # just keep it by not adding it to the found backups list
                 if days is not None and days_difference(now, ftime) < days:
                     continue
 
+                # Add the backup to the found backup list
                 found_backups.append(fname)
+
+                # Check if that backup should be kept as a weekly backup
                 if weeks is not None and \
                         (0 if days is not None
                          else -1) < weeks_difference(now, ftime) <= weeks:
-                    week_token = '{}{}'.format(*['%02d' % x for x in ftime.isocalendar()[0:2]])
-                    if week_token not in keep_weeks or ftime > keep_weeks[week_token][1]:
-                        keep_weeks[week_token] = (fname, ftime)
+                    token = '{}{}'.format(*['%02d' % x for x in ftime.isocalendar()[0:2]])
+                    if token not in keep_weeks or \
+                            (not incomplete and
+                             keep_weeks[token]['incomplete']) or \
+                            (incomplete == keep_weeks[token]['incomplete'] and
+                             ftime > keep_weeks[token]['time']):
+                        keep_weeks[token] = {
+                            'name': fname,
+                            'time': ftime,
+                            'incomplete': incomplete,
+                        }
 
+                # Check if that backup should be kept as a monthly backup
                 if months is not None and \
                         (0 if days is not None or
                          weeks is not None
                          else -1) < months_difference(now, ftime) <= months:
-                    month_token = '{}{}'.format(ftime.year, '%02d' % ftime.month)
-                    if month_token not in keep_months or ftime > keep_months[month_token][1]:
-                        keep_months[month_token] = (fname, ftime)
+                    token = '{}{}'.format(ftime.year, '%02d' % ftime.month)
+                    if token not in keep_months or \
+                            (not incomplete and
+                             keep_months[token]['incomplete']) or \
+                            (incomplete == keep_months[token]['incomplete'] and
+                             ftime > keep_months[token]['time']):
+                        keep_months[token] = {
+                            'name': fname,
+                            'time': ftime,
+                            'incomplete': incomplete,
+                        }
 
-        removecall(set(found_backups) - set([x[0] for x in keep_weeks.values()] +
-                                            [x[0] for x in keep_months.values()]))
+        # Remove the files that did not make the cut, if there is any
+        removecall(set(found_backups) - set([x['name'] for x in keep_weeks.values()] +
+                                            [x['name'] for x in keep_months.values()]))

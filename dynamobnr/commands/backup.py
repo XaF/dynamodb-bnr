@@ -440,6 +440,7 @@ class Backup(common.Command):
                                     nErrors,
                                     ', '.join(badReturn)))
             self._logger.exception(err)
+            self.upload_to_s3(incomplete=True)
             raise err
         else:
             self._logger.info('Backup ended without error')

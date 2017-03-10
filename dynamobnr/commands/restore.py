@@ -292,7 +292,8 @@ def table_restore(table_name, allow_resume=False, resume_args=None):
             n_items, table_name))
 
     # Resetting the write capacity if needed
-    if reset_capacity:
+    if reset_capacity and \
+            _RestoreInstance.get_parameters().reset_write_capacity:
         reset_msg = []
         if 'ProvisionedThroughput' in reset_capacity:
             reset_msg.append('table \'{}\' to {}'.format(

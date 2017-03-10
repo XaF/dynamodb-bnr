@@ -393,6 +393,13 @@ def parse_args():
              'write capacity is lower, then reset it to the right value at '
              'the end of the restore process')
     parser.add_argument(
+        '--no-reset-write-capacity',
+        dest='reset_write_capacity',
+        default=True,
+        action='store_false',
+        help='Disable the write capacity reset at the end of '
+             'the restore process')
+    parser.add_argument(
         '--ensure-matching-names',
         default='warning',
         choices=('ignore', 'warning', 'raise'),

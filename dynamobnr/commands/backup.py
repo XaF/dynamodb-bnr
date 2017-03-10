@@ -129,23 +129,29 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
                 with open(fpath, 'w+') as f:
                     f.write(jdump)
 
-        if update_read_capacity and \
-                table_schema['ProvisionedThroughput']['ReadCapacityUnits'] < \
-                _BackupInstance.get_parameters().tmp_read_capacity:
-            reset_capacity = _BackupInstance.get_parameters().reset_read_capacity
-            _BackupInstance.get_logger().info(('Increasing read capacity '
-                                               'of table \'{}\' to {}').format(
-                table_name,
-                _BackupInstance.get_parameters().tmp_read_capacity))
-            _BackupInstance.table_update(
-                TableName=table_name,
-                ProvisionedThroughput={
-                    'ReadCapacityUnits':
-                        _BackupInstance.get_parameters().tmp_read_capacity,
-                    'WriteCapacityUnits':
-                        table_schema['ProvisionedThroughput']['WriteCapacityUnits']
-                }
-            )
+        if update_read_capacity:
+            tmp_read_capacity = \
+                _BackupInstance.get_parameters().tmp_read_capacity(
+                    table_sanity['item_count_aws'],
+                    table_schema['ProvisionedThroughput']['ReadCapacityUnits'])
+
+            if tmp_read_capacity is not None and \
+                    tmp_read_capacity > \
+                    table_schema['ProvisionedThroughput']['ReadCapacityUnits']:
+                reset_capacity = \
+                    _BackupInstance.get_parameters().reset_read_capacity
+                _BackupInstance.get_logger().info(
+                    ('Increasing read capacity '
+                     'of table \'{}\' to {}').format(
+                     table_name, tmp_read_capacity))
+                _BackupInstance.table_update(
+                    TableName=table_name,
+                    ProvisionedThroughput={
+                        'ReadCapacityUnits': tmp_read_capacity,
+                        'WriteCapacityUnits':
+                            table_schema['ProvisionedThroughput']['WriteCapacityUnits']
+                    }
+                )
 
     # get table items
     if backup_data:

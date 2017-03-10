@@ -13,6 +13,7 @@ import logging
 import multiprocessing
 import os
 import sys
+import re
 
 from . import commands
 from .namespace import Namespace
@@ -63,6 +64,109 @@ def parser_error(errmsg):
     sys.exit(1)
 
 
+class ManageCapacityRule:
+    human_readable_units = {
+        'h': 1e2,
+        'k': 1e3,
+        'M': 1e6,
+        'G': 1e9,
+        'T': 1e12,
+        'P': 1e15,
+        'E': 1e18,
+        'Z': 1e21,
+        'Y': 1e24,
+    }
+    parse_re = re.compile('^(?P<num>[0-9]*(\.[0-9]*)?)(?P<unit>{})?$'.format(
+        '|'.join(human_readable_units.keys())))
+    rule_re = re.compile(
+        '^(?:(?P<threshold>(?:{0}|max))=)?(?P<inc>\+)?(?P<value>{0})$'.format(
+            '[0-9]*(\.[0-9]*)?[a-z]?'),
+        re.IGNORECASE)
+    max = float('inf')
+
+    def __init__(self, rules):
+        # Parse the rules
+        self.rules = self.parse_capacity_rule(rules)
+
+        # Check for duplicates in order to warn
+        thresholds = list(rule['threshold'] for rule in self.rules)
+        if len(thresholds) != len(set(thresholds)):
+            logger.warning('The provided rules contain duplicates '
+                           'that have been discarded; only the last '
+                           'rule for a given threshold has been kept')
+
+    def human_readable_to_number(self, val):
+        convert = self.parse_re.search(val)
+        if not convert:
+            raise RuntimeError(('Value \'{}\' cannot be converted, '
+                                'wrong format').format(val))
+
+        found = convert.groupdict()
+        if 'num' not in found or not found['num']:
+            raise RuntimeError(('Value \'{}\' cannot be converted, '
+                                'no numerical value found').format(val))
+
+        num = float(found['num'])
+
+        if 'unit' in found and found['unit'] is not None:
+            num *= self.human_readable_units[found['unit']]
+
+        return num
+
+    def parse_capacity_rule(self, rulestr):
+        ruleset = []
+        for rule in rulestr.split(';'):
+            ruledef = self.rule_re.match(rule)
+            if ruledef is None:
+                parser_error('Rule \'{}\' is invalid'.format(rule))
+
+            ruledef = ruledef.groupdict()
+            if ruledef['threshold'] is None:
+                ruledef['threshold'] = '0'
+            ruledef['inc'] = ruledef['inc'] is not None
+
+            convert = ['value', ]
+            if ruledef['threshold'] != 'max':
+                convert.append('threshold')
+            elif ruledef['inc']:
+                parser_error(('Rule \'{}\' cannot be defined as an '
+                              'increment while using \'max\'').format(rule))
+
+            try:
+                ruledef.update(
+                    dict((k, self.human_readable_to_number(ruledef[k]))
+                         for k in convert)
+                )
+            except Exception as e:
+                parser_error(('Rule \'{}\' caused an exception '
+                              'while parsing: {}').format(
+                    rule,
+                    str(e)))
+
+            if ruledef['threshold'] == 'max':
+                self.max = ruledef['value']
+                continue
+
+            ruleset.append(ruledef)
+
+        ruleset.sort(key=lambda rule: rule['threshold'])
+        ruleset.reverse()
+        return tuple(ruleset)
+
+    def get_rule(self, nb_items, capacity):
+        try:
+            next_capacity = int(min(
+                self.max,
+                next(rule['value'] +
+                     (capacity if rule['inc'] else 0)
+                     for rule in self.rules
+                     if nb_items >= rule['threshold'])))
+        except StopIteration as e:
+            next_capacity = None
+
+        return next_capacity
+
+
 def cli():
     global parameters, logger, aws
     parameters = parse_args()
@@ -70,6 +174,33 @@ def cli():
 
     logger = logging.getLogger('.'.join(
         os.path.basename(__file__).split('.')[:-1]))
+
+    if parameters.logfile is None:
+        fname = os.path.basename(__file__)
+        fsplit = os.path.splitext(fname)
+        if fsplit[1] == '.py':
+            fname = fsplit[0]
+        parameters.logfile = os.path.join(os.getcwd(), '{}.log'.format(fname))
+
+    fh = logging.FileHandler(parameters.logfile)
+    ch = logging.StreamHandler()
+
+    formatter = logging.Formatter('%(asctime)s::%(name)s::%(processName)s'
+                                  '::%(levelname)s::%(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+
+    log_level_value = getattr(logging, parameters.loglevel)
+    logger.setLevel(log_level_value)
+    fh.setLevel(log_level_value)
+    ch.setLevel(log_level_value)
+
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
+    if parameters.tmp_read_capacity is not None:
+        parameters.tmp_read_capacity = \
+            ManageCapacityRule(parameters.tmp_read_capacity).get_rule
 
     # Set up amazon configuration
     if parameters.access_key is not None:
@@ -122,29 +253,6 @@ def cli():
             parameters.s3_region is not None,
             parameters.s3_bucket is not None,
             parameters.s3_profile is not None))
-
-    if parameters.logfile is None:
-        fname = os.path.basename(__file__)
-        fsplit = os.path.splitext(fname)
-        if fsplit[1] == '.py':
-            fname = fsplit[0]
-        parameters.logfile = os.path.join(os.getcwd(), '{}.log'.format(fname))
-
-    fh = logging.FileHandler(parameters.logfile)
-    ch = logging.StreamHandler()
-
-    formatter = logging.Formatter('%(asctime)s::%(name)s::%(processName)s'
-                                  '::%(levelname)s::%(message)s')
-    fh.setFormatter(formatter)
-    ch.setFormatter(formatter)
-
-    log_level_value = getattr(logging, parameters.loglevel)
-    logger.setLevel(log_level_value)
-    fh.setLevel(log_level_value)
-    ch.setLevel(log_level_value)
-
-    logger.addHandler(fh)
-    logger.addHandler(ch)
 
     logger.info('Loglevel set to {}'.format(parameters.loglevel))
 
@@ -369,12 +477,24 @@ def parse_args():
     parser.add_argument(
         '--tmp-read-capacity',
         default=None,
-        type=int,
         nargs='?',
         const='25',
         help='Set a temporary read capacity for the table if it\'s normal '
              'read capacity is lower, then reset it to the right value at '
-             'the end of the backup process.')
+             'the end of the backup process. A more complicated set of rules '
+             'can be offered by using the syntax: "rule1;rule2;rule3" where '
+             'each rule can either be on the form "threshold=value", '
+             '"value", or "max=value". Threshold must be a numerical value '
+             'for which the rule will apply if the number of items is greater '
+             'or equal. Value must be a numerical value corresponding to the '
+             'capacity that will be set when the threshold is reached. If '
+             'value is prefixed by +, this value will be added to the current '
+             'capacity. If "max" is used as the threshold, the corresponding '
+             'value will be the maximum capacity that can be set by the tool. '
+             'If only a "value" is given, the threshold will be set as being '
+             '"0", and that value will be used when no other threshold has '
+             'been met. In any case, if no threshold is met, the capacity is '
+             'left as is.')
     parser.add_argument(
         '--no-reset-read-capacity',
         dest='reset_read_capacity',

@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 
+from botocore.exceptions import ClientError
 import datetime
 import fnmatch
 import re
 import os
 import shutil
+import time
 
 from . import awstools
 
@@ -234,3 +236,33 @@ class Command:
         # Remove the files that did not make the cut, if there is any
         removecall(set(found_backups) - set([x['name'] for x in keep_weeks.values()] +
                                             [x['name'] for x in keep_months.values()]))
+
+    def table_update(self, **kwargs):
+        client_ddb = self._aws.get_client_dynamodb()
+
+        updated = False
+        managedErrors = ['ResourceInUseException', 'LimitExceededException']
+        currentRetry = {
+            'resourceinuse': 0,
+            'limitexceeded': 0,
+        }
+
+        while not updated:
+            try:
+                client_ddb.update_table(**kwargs)
+                updated = True
+            except ClientError as e:
+                if e.response['Error']['Code'] in managedErrors:
+                    errorcode = e.response['Error']['Code'][:-9].lower()
+                    currentRetry[errorcode] += 1
+                    maxretryid = '{}_maxretry'.format(errorcode)
+                    if currentRetry[errorcode] >= self._const_parameters[maxretryid]:
+                        raise
+                    sleeptime = self._const_parameters['{}_sleeptime'.format(errorcode)]
+                    sleeptime = sleeptime * currentRetry[errorcode]
+                    self._logger.info(
+                        'Got \'{}\', waiting {} seconds before retry'.format(
+                            e.response['Error']['Code'], sleeptime))
+                    time.sleep(sleeptime)
+                else:
+                    raise

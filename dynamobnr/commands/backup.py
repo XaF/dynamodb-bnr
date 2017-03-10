@@ -40,6 +40,23 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
 
     _BackupInstance.get_logger().info('Starting backup of table \'{}\''.format(table_name))
 
+    backup_schema = _BackupInstance.get_parameters().backup_only is None or \
+        _BackupInstance.get_parameters().backup_only == 'schema'
+    backup_data = _BackupInstance.get_parameters().backup_only is None or \
+        _BackupInstance.get_parameters().backup_only == 'data'
+    sanity_check = \
+        _BackupInstance.get_parameters().sanity_check_action != 'ignore' and \
+        (_BackupInstance.get_parameters().sanity_check_threshold_more is not None or
+         _BackupInstance.get_parameters().sanity_check_threshold_less is not None)
+    update_read_capacity = backup_data and \
+        _BackupInstance.get_parameters().tmp_read_capacity is not None
+    reset_capacity = False
+
+    table_sanity = {
+        'item_count_aws': 0.0,
+        'item_count_calc': 0.0,
+    }
+
     # define the table directory
     if _BackupInstance.get_parameters().tar_path is not None:
         table_dump_path = os.path.join(
@@ -81,61 +98,57 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
         _BackupInstance.tarwrite_queue.put({'tarinfo': info})
 
     # get table schema
-    if _BackupInstance.get_parameters().backup_only is None or \
-            _BackupInstance.get_parameters().backup_only == 'schema':
-        _BackupInstance.get_logger().info(('Backing up table schema '
-                                          'for table \'{}\'').format(table_name))
+    if backup_schema or sanity_check or update_read_capacity:
 
-        table_sanity = {
-            'item_count_aws': 0.0,
-            'item_count_calc': 0.0,
-        }
+        _BackupInstance.get_logger().info(
+            ('{} table schema '
+             'for table \'{}\'').format(
+             'Backing up' if backup_schema else 'Reading',
+             table_name))
 
-        table_schema = None
-        retry = {
-            'openssl': 0,
-            'wrong_schema': 0
-        }
-        while table_schema is None:
-            try:
-                table_schema = client_ddb.describe_table(TableName=table_name)
-                table_schema = table_schema['Table']
-
-                if table_schema['TableName'] != table_name:
-                    if retry['wrong_schema'] >= _BackupInstance.get_const_parameters().wrongschema_maxretry:
-                        raise SanityCheckException(
-                            'Unable to get the schema for table \'{}\''.format(
-                                table_name))
-
-                    table_schema = None
-                    retry['wrong_schema'] += 1
-            except (OpenSSL.SSL.SysCallError, OpenSSL.SSL.Error) as e:
-                if retry['openssl'] >= _BackupInstance.get_const_parameters().opensslerror_maxretry:
-                    raise
-
-                _BackupInstance.get_logger().warning("Got OpenSSL error, retrying...")
-                retry['openssl'] += 1
-
+        table_schema = _BackupInstance.table_schema(table_name)
         table_sanity['item_count_aws'] += table_schema['ItemCount']
-        table_schema = common.clean_table_schema(table_schema)
 
-        jdump = json.dumps(table_schema,
-                           # cls=DateTimeEncoder,
-                           indent=_BackupInstance.get_const_parameters().json_indent)
-        fpath = os.path.join(table_dump_path, _BackupInstance.get_const_parameters().schema_file)
-        if _BackupInstance.get_parameters().tar_path is not None:
-            f = TarFileIO(jdump)
-            info = tarfile.TarInfo(name=fpath)
-            info.size = len(f.getvalue())
-            info.mode = 0o644
-            _BackupInstance.tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
-        else:
-            with open(fpath, 'w+') as f:
-                f.write(jdump)
+        if backup_schema:
+            table_schema = common.clean_table_schema(table_schema)
+
+            jdump = json.dumps(
+                table_schema,
+                # cls=DateTimeEncoder,
+                indent=_BackupInstance.get_const_parameters().json_indent)
+            fpath = os.path.join(
+                table_dump_path,
+                _BackupInstance.get_const_parameters().schema_file)
+            if _BackupInstance.get_parameters().tar_path is not None:
+                f = TarFileIO(jdump)
+                info = tarfile.TarInfo(name=fpath)
+                info.size = len(f.getvalue())
+                info.mode = 0o644
+                _BackupInstance.tarwrite_queue.put({'tarinfo': info, 'fileobj': f})
+            else:
+                with open(fpath, 'w+') as f:
+                    f.write(jdump)
+
+        if update_read_capacity and \
+                table_schema['ProvisionedThroughput']['ReadCapacityUnits'] < \
+                _BackupInstance.get_parameters().tmp_read_capacity:
+            reset_capacity = _BackupInstance.get_parameters().reset_read_capacity
+            _BackupInstance.get_logger().info(('Increasing read capacity '
+                                               'of table \'{}\' to {}').format(
+                table_name,
+                _BackupInstance.get_parameters().tmp_read_capacity))
+            _BackupInstance.table_update(
+                TableName=table_name,
+                ProvisionedThroughput={
+                    'ReadCapacityUnits':
+                        _BackupInstance.get_parameters().tmp_read_capacity,
+                    'WriteCapacityUnits':
+                        table_schema['ProvisionedThroughput']['WriteCapacityUnits']
+                }
+            )
 
     # get table items
-    if _BackupInstance.get_parameters().backup_only is None or \
-            _BackupInstance.get_parameters().backup_only == 'data':
+    if backup_data:
         more_items = 1
 
         _BackupInstance.get_logger().info("Backing up items for table \'{}\'".format(table_name))
@@ -177,9 +190,7 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
                 int(table_sanity['item_count_calc']), table_name))
 
         # Check the sanity of the backup if requested
-        if _BackupInstance.get_parameters().sanity_check_action != 'ignore' and \
-                (_BackupInstance.get_parameters().sanity_check_threshold_more is not None or
-                 _BackupInstance.get_parameters().sanity_check_threshold_less is not None):
+        if sanity_check:
             # Compute the percent of values that we have in excess or lack
             if table_sanity['item_count_aws'] == 0:
                 percent_more = float('inf') \
@@ -223,10 +234,62 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
                     int(table_sanity['item_count_aws']),
                     int(table_sanity['item_count_calc'])))
 
+    # Only if we wanted to reset the capacity at the end
+    if reset_capacity:
+        _BackupInstance.get_logger().info(('Resetting read capacity '
+                                           'of table \'{}\' to {}').format(
+            table_name,
+            table_schema['ProvisionedThroughput']['ReadCapacityUnits']))
+
+        # Re-read the table schema to be sure the write capacity did not change
+        throughput = _BackupInstance.table_schema(table_name)['ProvisionedThroughput']
+        throughput = {
+            'ReadCapacityUnits':
+                table_schema['ProvisionedThroughput']['ReadCapacityUnits'],
+            'WriteCapacityUnits':
+                throughput['WriteCapacityUnits']
+        }
+
+        # Update the table to reset the throughput read capacity
+        _BackupInstance.table_update(
+            TableName=table_name,
+            ProvisionedThroughput=throughput
+        )
+
     _BackupInstance.get_logger().info('Ended backup of table \'{}\''.format(table_name))
 
 
 class Backup(common.Command):
+
+    def table_schema(self, table_name):
+        client_ddb = self._aws.get_client_dynamodb()
+
+        table_schema = None
+        retry = {
+            'openssl': 0,
+            'wrong_schema': 0
+        }
+        while table_schema is None:
+            try:
+                table_schema = client_ddb.describe_table(TableName=table_name)
+                table_schema = table_schema['Table']
+
+                if table_schema['TableName'] != table_name:
+                    if retry['wrong_schema'] >= _BackupInstance.get_const_parameters().wrongschema_maxretry:
+                        raise SanityCheckException(
+                            'Unable to get the schema for table \'{}\''.format(
+                                table_name))
+
+                    table_schema = None
+                    retry['wrong_schema'] += 1
+            except (OpenSSL.SSL.SysCallError, OpenSSL.SSL.Error) as e:
+                if retry['openssl'] >= _BackupInstance.get_const_parameters().opensslerror_maxretry:
+                    raise
+
+                _BackupInstance.get_logger().warning("Got OpenSSL error, retrying...")
+                retry['openssl'] += 1
+
+        return table_schema
 
     def upload_to_s3(self, incomplete=False):
         # Upload to s3 if requested

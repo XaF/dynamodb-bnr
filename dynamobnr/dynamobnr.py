@@ -366,6 +366,22 @@ def parse_args():
         help='The threshold, in percent, for the number of elements that '
              'could be in lack of what is advertised by DynamoDB (keep '
              'in mind that there is an update every six hours)')
+    parser.add_argument(
+        '--tmp-read-capacity',
+        default=None,
+        type=int,
+        nargs='?',
+        const='25',
+        help='Set a temporary read capacity for the table if it\'s normal '
+             'read capacity is lower, then reset it to the right value at '
+             'the end of the backup process.')
+    parser.add_argument(
+        '--no-reset-read-capacity',
+        dest='reset_read_capacity',
+        default=True,
+        action='store_false',
+        help='Disable the read capacity reset at the end of '
+             'the backup process')
 
     # Restore specific options
     parser.add_argument(

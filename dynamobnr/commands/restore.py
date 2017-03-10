@@ -468,35 +468,6 @@ class Restore(common.Command):
                 else:
                     raise
 
-    def table_update(self, **kwargs):
-        client_ddb = self._aws.get_client_dynamodb()
-
-        updated = False
-        managedErrors = ['ResourceInUseException', 'LimitExceededException']
-        currentRetry = {
-            'resourceinuse': 0,
-            'limitexceeded': 0,
-        }
-
-        while not updated:
-            try:
-                client_ddb.update_table(**kwargs)
-                updated = True
-            except ClientError as e:
-                if e.response['Error']['Code'] in managedErrors:
-                    errorcode = e.response['Error']['Code'][:-9].lower()
-                    currentRetry[errorcode] += 1
-                    if currentRetry[errorcode] >= self._const_parameters['{}_maxretry'.format(errorcode)]:
-                        raise
-                    sleeptime = self._const_parameters['{}_sleeptime'.format(errorcode)]
-                    sleeptime = sleeptime * currentRetry[errorcode]
-                    self._logger.info(
-                        'Got \'{}\', waiting {} seconds before retry'.format(
-                            e.response['Error']['Code'], sleeptime))
-                    time.sleep(sleeptime)
-                else:
-                    raise
-
     def table_batch_write(self, table_name, items, action_returned='sleep'):
         client_ddb = self._aws.get_client_dynamodb()
 

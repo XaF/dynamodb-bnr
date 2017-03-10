@@ -44,7 +44,7 @@ class ParallelWorkers:
             self._logger.info(('Received job: {dict_key} = '
                                '{func}(*{args}, **{kwargs})').format(**{
                                 'dict_key': job.get('dict_key'),
-                                'func': job.get('func'),
+                                'func': job.get('func').__name__,
                                 'args': job.get('args', []),
                                 'kwargs': job.get('kwargs', {}).keys(),
                                }))

@@ -39,7 +39,8 @@ _BackupInstance = None
 def table_backup(table_name, allow_resume=False, resume_args=None):
     client_ddb = _BackupInstance.get_aws().get_client_dynamodb()
 
-    _BackupInstance.get_logger().info('Starting backup of table \'{}\''.format(table_name))
+    _BackupInstance.get_logger().info(
+        'Starting backup of table \'{}\''.format(table_name))
 
     backup_schema = _BackupInstance.get_parameters().backup_only is None or \
         _BackupInstance.get_parameters().backup_only == 'schema'
@@ -253,12 +254,13 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
                     int(table_sanity['item_count_calc'])
                 )
             else:
-                _BackupInstance.get_logger().info(('Sanity check for table \'{}\' did not break any '
-                                                   'threshold (AWS advertised {} items, and we '
-                                                   'scanned {})').format(
-                    table_name,
-                    int(table_sanity['item_count_aws']),
-                    int(table_sanity['item_count_calc'])))
+                _BackupInstance.get_logger().info(
+                    ('Sanity check for table \'{}\' did not break any '
+                     'threshold (AWS advertised {} items, and we '
+                     'scanned {})').format(
+                     table_name,
+                     int(table_sanity['item_count_aws']),
+                     int(table_sanity['item_count_calc'])))
 
     # Only if we wanted to reset the capacity at the end
     if reset_capacity:

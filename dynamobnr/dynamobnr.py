@@ -475,6 +475,17 @@ def parse_args():
              'could be in lack of what is advertised by DynamoDB (keep '
              'in mind that there is an update every six hours)')
     parser.add_argument(
+        '--sanity-check-threshold-evolutive',
+        default=None,
+        type=float,
+        nargs='?',
+        const=1.,
+        help='Evolutive threshold uses a logarithm function to increase the '
+             'actual allowed percent when the numbers of items are really '
+             'small. It means that the percent that you provide for \'more\' '
+             'and \'less\' boundaries becomes minimums when this option is '
+             'used.')
+    parser.add_argument(
         '--tmp-read-capacity',
         default=None,
         nargs='?',

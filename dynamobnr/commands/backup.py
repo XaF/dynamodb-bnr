@@ -5,6 +5,7 @@ from botocore.exceptions import ClientError
 import errno
 import fnmatch
 import json
+import math
 import multiprocessing
 import OpenSSL
 import os
@@ -197,31 +198,50 @@ def table_backup(table_name, allow_resume=False, resume_args=None):
 
         # Check the sanity of the backup if requested
         if sanity_check:
-            # Compute the percent of values that we have in excess or lack
-            if table_sanity['item_count_aws'] == 0:
-                percent_more = float('inf') \
-                    if table_sanity['item_count_calc'] > 0 \
-                    else 0.0
-                percent_less = 0.0
-            elif table_sanity['item_count_calc'] == 0:
-                percent_more = 0.0
-                percent_less = float('inf') \
-                    if table_sanity['item_count_aws'] > 0 \
-                    else 0.0
-            else:
-                percent_more = (table_sanity['item_count_calc'] /
-                                table_sanity['item_count_aws']) - 1
-                percent_less = (1.0 / (percent_more + 1)) - 1
+            # Store variables in easier names to use
+            c = table_sanity['item_count_aws']
+            f = _BackupInstance.get_parameters().sanity_check_threshold_evolutive
+            pmore = _BackupInstance.get_parameters().sanity_check_threshold_more
+            pless = _BackupInstance.get_parameters().sanity_check_threshold_less
 
-            # Check if a given threshold has been broken
+            # If we use the evolutive approach, compute the logarithm percent
+            # that will be used if it is greater than the min or max percent.
+            # If both pmore and pless are defined, the same difference factor
+            # will be applied to the plog (i.e. if less if 2 times smaller than
+            # more, plogless will receive a .5 factor)
+            if f is not None:
+                plog = 1. / math.log(max(2, c))
+                if pless is not None and pmore is not None and pless != pmore:
+                    diviser = float(max(pless, pmore)) / float(min(pless, pmore))
+                    plogvalues = (f * plog, f / diviser * plog)
+                    if pmore > pless:
+                        plogmore, plogless = plogvalues
+                    else:
+                        plogless, plogmore = plogvalues
+                else:
+                    plogless = plogmore = f * plog
+            else:
+                plogless = plogmore = 0.
+
+            # If the percentage less is defined, compute the minimum count we
+            # must have received for the sanity check to pass
+            if pless is not None:
+                min_count = int(math.floor(c * (1. - max(pless / 100., plogless))))
+            else:
+                min_count = 0
+
+            # If the percentage less is defined, compute the maximum count we
+            # must have received for the sanity check to pass
+            if pmore is not None:
+                max_count = int(math.ceil(c * (1. + max(pmore / 100., plogmore))))
+            else:
+                max_count = float('inf')
+
+            # Check if a threshold has been broken
             broke = False
-            if _BackupInstance.get_parameters().sanity_check_threshold_more is not None and \
-                    percent_more > 0 and \
-                    percent_more >= (_BackupInstance.get_parameters().sanity_check_threshold_more * 1.0 / 100.0):
+            if table_sanity['item_count_calc'] > max_count:
                 broke = 'more'
-            elif _BackupInstance.get_parameters().sanity_check_threshold_less is not None and \
-                    percent_less > 0 and \
-                    percent_less >= (_BackupInstance.get_parameters().sanity_check_threshold_less * 1.0 / 100.0):
+            elif table_sanity['item_count_calc'] < min_count:
                 broke = 'less'
 
             # Act if a threshold has been broken

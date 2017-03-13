@@ -1,7 +1,7 @@
 dynamodb-bnr
 ============
 
-dynamodb backup'n'restore python script with tarfile management
+DynamoDB backup'n'restore python script with tarfile management
 
 ## Description
 
@@ -34,6 +34,12 @@ When making calls to AWS API, some errors can happen. Here is a list of the erro
   - **ResourceInUseException:** wait for 10*(current_retry+1) seconds before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
   - **ResourceNotFoundException:** already deleted, ignore
 
+### [UpdateTable][aws_errors:updatetable]
+  - **InternalServerError:** script fails and exit != 0
+  - **LimitExceededException:** wait for 15*(current_retry+1) seconds before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
+  - **ResourceInUseException:** wait for 10*(current_retry+1) seconds before retrying, max retry = 5 (default values), if not solved after max retry, script fails and exit != 0
+  - **ResourceNotFoundException:** script fails and exit != 0
+
 ### [DescribeTable][aws_errors:describetable]
   - **InternalServerError:** script fails and exit != 0
   - **ResourceNotFoundException**
@@ -58,6 +64,7 @@ When making calls to AWS API, some errors can happen. Here is a list of the erro
 [aws_errors:listtables]: http://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_ListTables.html#API_ListTables_Errors
 [aws_errors:createtable]: http://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_CreateTable.html#API_CreateTable_Errors
 [aws_errors:deletetable]: http://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DeleteTable.html#API_DeleteTable_Errors
+[aws_errors:updatetable]: https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_UpdateTable.html#API_UpdateTable_Errors
 [aws_errors:describetable]: http://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_DescribeTable.html#API_DescribeTable_Errors
 [aws_errors:scan]: http://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Scan.html#API_Scan_Errors
 [aws_errors:batchwriteitem]: http://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchWriteItem.html#API_BatchWriteItem_Errors
